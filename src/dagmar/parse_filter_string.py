@@ -151,7 +151,7 @@ def parse_filter_string(filter_str: str, allow_fields: list[str] | None = None) 
             search_text = like_match.group(1).strip()
             return models.FieldCondition(
                 key=key,
-                match=models.MatchPhrase(phrase=search_text),
+                match=models.MatchText(text=search_text),
             )
 
         # Handle = operator (equality)
