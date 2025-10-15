@@ -1,0 +1,60 @@
+[project]
+name = "dagmar"
+version = "0.1.0"
+description = "Local RAG for LLM-based applications"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastembed>=0.7.3",
+    "langchain>=1.0.0a14",
+    "langchain-community>=1.0.0a1",
+    "langchain-qdrant>=1.0.0a1",
+    "langchain-text-splitters>=1.0.0a1",
+    "pypdf>=6.1.1",
+]
+
+[project.scripts]
+dagmar = "dagmar.cli:main"
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dagmar"]
+
+[tool.uv.sources]
+dagmar = { workspace = true }
+
+[tool.ruff]
+# Ruff will check the following rule groups:
+# E   - pycodestyle (PEP 8) errors
+# D   - pydocstyle (docstring conventions)
+# W   - pycodestyle (PEP 8) warnings
+# ARG - flake8-unused-arguments (unused function arguments)
+# TC  - flake8-type-checking (type-checking imports)
+# RSE - flake8-raise (raise statement issues)
+# Q   - flake8-quotes (quote style issues)
+# PT  - flake8-pytest-style (pytest best practices)
+# F   - pyflakes (unused imports, unused variables, syntax errors)
+lint.select = ["E","W","D","ARG","TC","RSE","Q","PT","I","F"]
+lint.ignore = ["D203", "D213"]
+line-length = 120
+target-version = "py312"
+
+[tool.pyright]
+exclude = ["**/__pycache__",
+    "**/.pytest_cache",
+    "**/.ruff_cache",
+    "**/.vscode",
+    "**/.venv",
+    "**/temp"
+    ]
