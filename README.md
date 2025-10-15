@@ -220,5 +220,11 @@ When using keyword-based field filtering (`--fields` option), you can use struct
 - [FastEmbed](https://github.com/qdrant/fastembed) for efficient embeddings
 - [Sentence Transformers](https://www.sbert.net/) for embedding models
 
----
+## TODO:
 
+- [ ] Add support for pptx and docx files
+- [ ] Add MCP server only stdio
+- [ ] Add store method to get complete page of document (filter by page field and group and return)
+- [ ] Add LLM pdf parser (image-to-text)
+- [ ] Add support for Qdrant server
+- [ ] Add tests

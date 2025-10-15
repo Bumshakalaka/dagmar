@@ -1,3 +1,5 @@
+"""Parse a filter string into a Qdrant Filter object."""
+
 import re
 from typing import Optional
 
