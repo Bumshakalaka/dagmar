@@ -41,6 +41,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--fields",
+        action="store_true",
+        default=False,
+        help="Use keyword-based field search instead of semantic search (default: false)",
+    )
+
+    parser.add_argument(
         "query",
         type=str,
         help="Search query to find relevant content",
@@ -59,7 +66,10 @@ Examples:
     # Initialize store and perform search
     try:
         store = QdrantStore("./qdrant_db")
-        results = store.search(file_path, args.query, args.results)
+        if args.fields:
+            results = store.search_by_fields(file_path, args.query, args.results)
+        else:
+            results = store.search_semantic(file_path, args.query, args.results)
 
         if not results:
             print("No results found.")

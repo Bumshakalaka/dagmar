@@ -15,6 +15,7 @@ from langchain_core.documents import Document
 from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
 from qdrant_client import QdrantClient, models
 
+from dagmar.parse_filter_string import parse_filter_string
 from dagmar.splitters import get_splitter
 
 
@@ -24,6 +25,46 @@ class MyQdrantVectorStore(QdrantVectorStore):
     This class extends QdrantVectorStore to provide improved similarity search
     capabilities with support for dense, sparse, and hybrid retrieval modes.
     """
+
+    def search_by_fields(
+        self,
+        filter: str,
+        k: int = 4,
+    ):
+        """Search documents using keyword-based filtering on page_content.
+
+        Args:
+            filter: Filter string to parse and apply to document search. Only page_content can be used.
+                - Text search: page_content like 'search text'
+                - Logical: and, or, not
+                - Grouping: parentheses ()
+                - e.g. page_content like 'Langchain' and (page_content like 'Qdrant' or page_content like 'fastembed')
+            k: Maximum number of documents to return.
+
+        Returns:
+            List of tuples containing Document objects and their similarity scores.
+
+        """
+        query_filter = parse_filter_string(filter, allow_fields=[self.content_payload_key])
+        results = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=query_filter,
+            limit=k,
+            with_payload=True,
+            with_vectors=False,  # Don't return vectors for filter-only queries
+        )
+        return [
+            (
+                self._document_from_point(
+                    result,
+                    self.collection_name,
+                    self.content_payload_key,
+                    self.metadata_payload_key,
+                ),
+                1,
+            )
+            for result in results[0]
+        ]
 
     def similarity_search_with_score(
         self,
@@ -161,7 +202,7 @@ class QdrantStore:
         self.sparse = FastEmbedSparse(model_name="prithivida/Splade_PP_en_v1", batch_size=128)
         self.reranker = TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
 
-    def _init_colection(self, collection_name: str) -> tuple[QdrantVectorStore, bool]:
+    def _init_colection(self, collection_name: str) -> tuple[MyQdrantVectorStore, bool]:
         """Initialize or retrieve existing Qdrant collection.
 
         Creates a new collection if it doesn't exist, otherwise returns the existing one.
@@ -197,7 +238,27 @@ class QdrantStore:
         )
         return vector_store, exists
 
-    def _add_documents(self, v_store: QdrantVectorStore, documents: List[Document]):
+    def _create_index(self, collection_name: str):
+        """Create text index on document content for keyword search.
+
+        Args:
+            collection_name: Name of the collection to create index for.
+
+        """
+        self.client.create_payload_index(
+            collection_name=collection_name,
+            field_name="page_content",
+            field_schema=models.TextIndexParams(
+                type=models.TextIndexType.TEXT,
+                tokenizer=models.TokenizerType.PREFIX,
+                lowercase=True,
+                phrase_matching=True,
+                stemmer=models.SnowballParams(type=models.Snowball.SNOWBALL, language=models.SnowballLanguage.ENGLISH),
+            ),
+            wait=True,  # Wait for index creation to complete
+        )
+
+    def _add_documents(self, v_store: MyQdrantVectorStore, documents: List[Document]):
         """Add documents to the vector store.
 
         Args:
@@ -207,7 +268,7 @@ class QdrantStore:
         """
         v_store.add_documents(documents)
 
-    def _search_documents(self, v_store: QdrantVectorStore, query: str, k: int = 4):
+    def _search_documents(self, v_store: MyQdrantVectorStore, query: str, k: int = 4):
         """Search for documents similar to the query.
 
         Args:
@@ -242,7 +303,7 @@ class QdrantStore:
         reranked_results.sort(key=lambda x: x[1], reverse=True)
         return reranked_results[0:k]
 
-    def search(self, doc_path: Path, query: str, k: int = 4):
+    def search_semantic(self, doc_path: Path, query: str, k: int = 4):
         """Search for relevant content in a document using vector similarity.
 
         Processes the document if not already indexed, then performs hybrid search
@@ -263,6 +324,7 @@ class QdrantStore:
             splitter = get_splitter(str(doc_path))
             documents = splitter.split(str(doc_path))
             self._add_documents(v_store, documents)
+            self._create_index(doc_path.name)
         results = self._search_documents(v_store, query, k * 2 if k >= 5 else 10)
         reranked_results = self._rerank(query, results, k)
         return [
@@ -274,12 +336,45 @@ class QdrantStore:
             for doc, score in reranked_results
         ]
 
+    def search_by_fields(self, doc_path: Path, query: str, k: int = 4):
+        """Search documents using keyword-based filtering.
+
+        Args:
+            doc_path: Path to the document file to search in.
+            query: Filter query string for keyword-based search on page_content. Only page_content can be used.
+                - Text search: page_content like 'search text' (for TEXT indexed fields)
+                - Logical: and, or, not
+                - Grouping: parentheses ()
+                - e.g. page_content like 'Langchain' and (page_content like 'Qdrant' or page_content like 'fastembed')
+            k: Number of top results to return.
+
+        Returns:
+            List of dictionaries containing content, metadata, and relevance scores
+            for matching document sections.
+
+        """
+        v_store, exists = self._init_colection(doc_path.name)
+        if not exists:
+            splitter = get_splitter(str(doc_path))
+            documents = splitter.split(str(doc_path))
+            self._add_documents(v_store, documents)
+            self._create_index(doc_path.name)
+        results = v_store.search_by_fields(query, k)
+        return [
+            {
+                "content": doc.page_content,
+                "metadata": doc.metadata,
+                "score": score,
+            }
+            for doc, score in results
+        ]
+
 
 if __name__ == "__main__":
     store = QdrantStore("./qdrant_db")
-    results = store.search(
+    results = store.search_by_fields(
         Path("/home/totyz/Downloads/Amazon_Sidewalk_Test_Specification-1.0-rev-A.4.md"),
-        "BLE/EP/CONN/DUP/BV/04",
-        1,
+        "page_content like 'BLE/EP/CONN/DUP/BV/04'",
+        2,
     )
     pprint.pprint(results)

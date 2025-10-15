@@ -13,6 +13,11 @@ dependencies = [
     "pypdf>=6.1.1",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.14.0",
+]
+
 [project.scripts]
 dagmar = "dagmar.cli:main"
 

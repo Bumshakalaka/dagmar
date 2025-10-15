@@ -7,6 +7,7 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 ## Features
 
 - **Hybrid Retrieval**: Combines dense and sparse vector embeddings for superior search accuracy
+- **Keyword-Based Filtering**: Support for structured field queries with logical operators
 - **Reranking**: Uses cross-encoder models to rerank results for better relevance
 - **Multi-Format Support**: Handles PDF, Markdown, Text, and CSV files automatically
 - **Local Vector Database**: Stores embeddings locally using Qdrant for privacy and performance
@@ -49,6 +50,9 @@ dagmar --file document.pdf "What is the main topic discussed?"
 # Specify number of results (default: 4)
 dagmar --results 10 --file report.md "Summarize the key findings"
 
+# Keyword-based field filtering (structured queries)
+dagmar --fields --file document.pdf "page_content like 'important keyword'"
+
 # Short form options
 dagmar -k 5 -f data.csv "Show me entries with status=active"
 ```
@@ -57,6 +61,7 @@ dagmar -k 5 -f data.csv "Show me entries with status=active"
 
 - `-f, --file`: Path to the document file (required)
 - `-k, --results`: Number of search results to return (default: 4)
+- `--fields`: Use keyword-based field search instead of semantic search (default: false)
 - `query`: Search query (positional argument)
 
 ### Examples
@@ -70,6 +75,11 @@ dagmar --file notes.md "implementation details"
 
 # Search in a CSV file
 dagmar --file data.csv "filter by category"
+
+# Keyword-based filtering examples
+dagmar --fields --file document.pdf "page_content like 'machine learning'"
+dagmar --fields --file report.md "page_content like 'error' and page_content like 'handling'"
+dagmar --fields --file spec.pdf "(page_content like 'API' or page_content like 'interface') and not page_content like 'deprecated'"
 ```
 
 ## Technology Stack
@@ -108,12 +118,13 @@ dagmar --file data.csv "filter by category"
 ```
 dagmar/
 ├── src/dagmar/
-│   ├── cli.py           # Command-line interface
-│   ├── store.py         # Vector store and search logic
-│   └── splitters.py     # Document processing utilities
-├── qdrant_db/           # Local vector database
-├── pyproject.toml       # Project configuration
-└── README.md           # This file
+│   ├── cli.py                 # Command-line interface
+│   ├── store.py               # Vector store and search logic
+│   ├── splitters.py           # Document processing utilities
+│   └── parse_filter_string.py # Filter query parsing utilities
+├── qdrant_db/                 # Local vector database
+├── pyproject.toml             # Project configuration
+└── README.md                  # This file
 ```
 
 ## Configuration
@@ -146,7 +157,7 @@ from pathlib import Path
 store = QdrantStore("./qdrant_db")
 
 # Search in a document
-results = store.search(
+results = store.search_semantic(
     Path("document.pdf"),
     "your search query",
     k=5
@@ -157,6 +168,49 @@ for result in results:
     print(f"Content: {result['content']}")
     print(f"Metadata: {result['metadata']}")
     print(f"Score: {result['score']}")
+
+# Keyword-based field filtering
+results = store.search_by_fields(
+    Path("document.pdf"),
+    "page_content like 'important keyword'",
+    k=5
+)
+
+# Advanced filtering with logical operators
+results = store.search_by_fields(
+    Path("report.md"),
+    "page_content like 'error' and page_content like 'handling'",
+    k=10
+
+)
+```
+
+## Filter Query Syntax
+
+When using keyword-based field filtering (`--fields` option), you can use structured queries with the following syntax:
+
+### Supported Operators
+
+- **Text Search**: `page_content like 'search text'` - Search for text within document content
+- **Logical AND**: `condition1 and condition2` - Both conditions must be true
+- **Logical OR**: `condition1 or condition2` - Either condition must be true
+- **Logical NOT**: `not condition` - Negate a condition
+- **Grouping**: `(condition1 or condition2) and condition3` - Use parentheses for precedence
+
+### Examples
+
+```bash
+# Simple text search
+"page_content like 'machine learning'"
+
+# Multiple keywords with AND
+"page_content like 'error' and page_content like 'handling'"
+
+# Multiple keywords with OR
+"page_content like 'API' or page_content like 'interface'"
+
+# Complex query with grouping
+"(page_content like 'bug' or page_content like 'issue') and not page_content like 'resolved'"
 ```
 
 ## Acknowledgments
