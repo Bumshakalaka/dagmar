@@ -13,6 +13,7 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 - **Local Vector Database**: Stores embeddings locally using Qdrant for privacy and performance
 - **Automatic Indexing**: Documents are processed and indexed on-demand
 - **CLI Interface**: Simple command-line interface for easy integration
+- **MCP Server**: Model Context Protocol server for integration with AI assistants and IDEs
 
 
 ## Installation
@@ -82,6 +83,36 @@ dagmar --fields --file report.md "page_content like 'error' and page_content lik
 dagmar --fields --file spec.pdf "(page_content like 'API' or page_content like 'interface') and not page_content like 'deprecated'"
 ```
 
+## MCP Server
+
+Dagmar provides an MCP (Model Context Protocol) server that allows AI assistants and IDEs to search documents using Dagmar's powerful retrieval capabilities.
+
+### Install the MCP Server in Cursor
+
+Add to mcp.json in Cursor:
+
+```json
+    "dagmar": {
+      "command": "uv",
+      "args": ["run", "--directory", "path_to_dagmar","dagmar-server"]
+    }
+```
+
+### MCP Tool: Document Search
+
+The MCP server exposes a `dagmar_doc_search` tool that enables semantic document search with the following capabilities:
+
+- **Hybrid Search**: Combines dense and sparse vector embeddings using Reciprocal Rank Fusion (RRF)
+- **Reranking**: Uses cross-encoder models to improve result relevance
+- **Multi-Format Support**: Works with PDF, Markdown, Text, and CSV files
+- **Flexible Results**: Configurable number of results returned
+
+#### Tool Parameters
+
+- `query`: Natural language search query
+- `file_path`: Path to the document file to search
+- `limit`: Number of top results to return (default: 4)
+
 ## Technology Stack
 
 ### Core Technologies
@@ -90,6 +121,7 @@ dagmar --fields --file spec.pdf "(page_content like 'API' or page_content like '
 - **Qdrant**: High-performance vector database for similarity search
 - **LangChain**: Framework for LLM applications and document processing
 - **FastEmbed**: Efficient embedding generation for local use with CPU
+- **FastMCP**: Model Context Protocol server framework
 - **Cross-Encoders**: Advanced reranking models
 
 ### Embedding Models
@@ -119,6 +151,7 @@ dagmar --fields --file spec.pdf "(page_content like 'API' or page_content like '
 dagmar/
 ├── src/dagmar/
 │   ├── cli.py                 # Command-line interface
+│   ├── server.py              # MCP server implementation
 │   ├── store.py               # Vector store and search logic
 │   ├── splitters.py           # Document processing utilities
 │   └── parse_filter_string.py # Filter query parsing utilities
@@ -223,8 +256,9 @@ When using keyword-based field filtering (`--fields` option), you can use struct
 ## TODO:
 
 - [ ] Add support for pptx and docx files
-- [ ] Add MCP server only stdio
+- [x] Add MCP server only stdio
 - [ ] Add store method to get complete page of document (filter by page field and group and return)
 - [ ] Add LLM pdf parser (image-to-text)
 - [ ] Add support for Qdrant server
 - [ ] Add tests
+- [ ] Allow to update payload in collection. E.g. while working with dokument, user would like to add some information to payload for further better search results.

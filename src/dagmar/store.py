@@ -81,6 +81,8 @@ class QdrantStore:
     def _create_index(self, collection_name: str):
         """Create text index on document content for keyword search.
 
+        Payload indexes have no effect in the local Qdrant. Please use server Qdrant if you need payload indexes.
+
         Args:
             collection_name: Name of the collection to create index for.
 

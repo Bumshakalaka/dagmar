@@ -99,10 +99,6 @@ class PdfSplitter(FileSplitter):
         """
         loader = PyPDFLoader(file_path, extraction_mode="plain", extract_images=False)
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100, length_function=len)
-        with open("./aa.md", "w") as fd:
-            for doc in loader.load():
-                fd.write(doc.page_content)
-                fd.write("\n" + "-" * 100)
         return loader.load_and_split(text_splitter=text_splitter)
 
 
