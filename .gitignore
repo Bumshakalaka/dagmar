@@ -13,3 +13,4 @@ wheels/
 .cursor
 
 qdrant_db/
+.env

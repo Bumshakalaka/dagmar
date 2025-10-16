@@ -10,6 +10,7 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 - **Keyword-Based Filtering**: Support for structured field queries with logical operators
 - **Reranking**: Uses cross-encoder models to rerank results for better relevance
 - **Multi-Format Support**: Handles PDF, Markdown, Text, and CSV files automatically
+- **LLM-Based PDF Processing**: Advanced PDF extraction using Azure OpenAI vision models for structured content
 - **Local Vector Database**: Stores embeddings locally using Qdrant for privacy and performance
 - **Automatic Indexing**: Documents are processed and indexed on-demand
 - **CLI Interface**: Simple command-line interface for easy integration
@@ -21,7 +22,7 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 ### Prerequisites
 
 - Python 3.11 or higher
-- uv package manager (recommended)
+- uv package manager
 
 ### Install from source
 
@@ -30,8 +31,17 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 git clone <repository-url>
 cd dagmar
 
-# Install with uv (recommended)
+# Install with uv
 uv sync
+
+# to use LLM vision model for pdf processing, you need to set up Azure OpenAI or OpenAI API keys in .env file
+# AZURE_OPENAI_ENDPOINT=https://<your-resource-name>.openai.azure.com/
+# AZURE_OPENAI_API_KEY=<your-api-key>
+# OPENAI_API_KEY=<your-api-key>
+
+# or
+
+# OPENAI_API_KEY=<your-api-key>
 
 ```
 
@@ -123,6 +133,9 @@ The MCP server exposes a `dagmar_doc_search` tool that enables semantic document
 - **FastEmbed**: Efficient embedding generation for local use with CPU
 - **FastMCP**: Model Context Protocol server framework
 - **Cross-Encoders**: Advanced reranking models
+- **Azure OpenAI**: Vision models for advanced PDF content extraction
+- **Pillow**: Image processing for PDF page conversion
+- **PyMuPDF**: High-performance PDF rendering and image extraction
 
 ### Embedding Models
 
@@ -142,6 +155,7 @@ The MCP server exposes a `dagmar_doc_search` tool that enables semantic document
 ### Document Processing
 
 - **PyPDF**: PDF text extraction
+- **LLM Vision Extraction**: Azure OpenAI vision models for structured PDF content extraction
 - **LangChain Text Splitters**: Intelligent document chunking
 - **CSV Sniffer**: Automatic CSV format detection
 
@@ -258,7 +272,8 @@ When using keyword-based field filtering (`--fields` option), you can use struct
 - [ ] Add support for pptx and docx files
 - [x] Add MCP server only stdio
 - [ ] Add store method to get complete page of document (filter by page field and group and return)
-- [ ] Add LLM pdf parser (image-to-text)
+- [x] Add LLM pdf parser (image-to-text)
 - [ ] Add support for Qdrant server
 - [ ] Add tests
 - [ ] Allow to update payload in collection. E.g. while working with dokument, user would like to add some information to payload for further better search results.
+- [ ] Search in multiple files
