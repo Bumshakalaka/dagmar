@@ -22,10 +22,15 @@ Usage:
 """
 
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
 from typing import List, Optional
+
+from dagmar.logging_config import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 class MarkdownCleaner:
@@ -259,14 +264,17 @@ class MarkdownFixer:
             True if issues were found and fixed, False otherwise
 
         """
+        logger.info(f"Processing markdown file: {input_path}")
         # Read input file
         try:
             content = input_path.read_text(encoding="utf-8")
         except Exception as e:
+            logger.error(f"Error reading file: {e}")
             print(f"Error reading file: {e}", file=sys.stderr)
             sys.exit(1)
 
         lines = content.splitlines(keepends=False)
+        logger.debug(f"Read {len(lines)} lines from file")
 
         # Process lines
         self._fix_lines(lines)
@@ -280,16 +288,20 @@ class MarkdownFixer:
 
         # Apply cleaners
         for cleaner in self.cleaners:
+            logger.debug(f"Applying cleaner: {cleaner.__class__.__name__}")
             self.fixed_lines = cleaner.clean(self.fixed_lines, self.issues)
             # Clean up any excessive blank lines that might have been created
             self._remove_excess_blank_lines()
 
         # Report and write results
         if self.issues:
+            logger.debug(f"Found {len(self.issues)} issues to fix")
             self._report_issues(output_path)
             output_path.write_text("\n".join(self.fixed_lines) + "\n", encoding="utf-8")
+            logger.info(f"Fixed file written to: {output_path}")
             return True
         else:
+            logger.info("No issues found in markdown file")
             print("✓ No issues found")
             return False
 
@@ -592,11 +604,21 @@ Examples:
         type=str,
         help="Comma-separated list of cleaners to apply (available: toc)",
     )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="WARNING",
+        help="Set the logging level (default: WARNING)",
+    )
 
     args = parser.parse_args()
 
+    # Initialize logging
+    setup_logging(args.log_level)
+
     # Validate input file exists
     if not args.input.exists():
+        logger.error(f"Input file not found: {args.input}")
         print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         sys.exit(1)
 
@@ -611,14 +633,18 @@ Examples:
     # Parse and instantiate cleaners
     cleaners = []
     if args.cleaner:
+        logger.debug(f"Parsing cleaners: {args.cleaner}")
         cleaner_names = [name.strip().lower() for name in args.cleaner.split(",")]
         for name in cleaner_names:
             if name == "toc":
                 cleaners.append(TocRemoverCleaner())
+                logger.debug("Added TocRemoverCleaner")
             else:
+                logger.warning(f"Unknown cleaner '{name}', skipping...")
                 print(f"Warning: Unknown cleaner '{name}', skipping...", file=sys.stderr)
 
     # Process file
+    logger.info(f"Starting markdown processing with {len(cleaners)} cleaners")
     fixer = MarkdownFixer(cleaners=cleaners)
     fixer.process_file(args.input, output_path)
 

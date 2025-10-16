@@ -8,6 +8,7 @@ specialized splitters for different document formats.
 import base64
 import csv
 import io
+import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,6 +23,8 @@ from langchain_community.document_loaders import CSVLoader, PyPDFLoader, TextLoa
 from langchain_core.documents import Document
 from langchain_text_splitters import MarkdownTextSplitter, RecursiveCharacterTextSplitter
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 FILE_SPLITTERS: Dict[str, Type["FileSplitter"]] = {}
 
@@ -39,16 +42,20 @@ def get_splitter(file_path: str) -> Type["FileSplitter"]:
     :return: The FileSplitter class with the highest priority that matches the file path.
     :raises ValueError: If no matching splitter is found for the given file path.
     """
+    logger.debug(f"Finding splitter for file: {file_path}")
     ret = []
     for _, obj in FILE_SPLITTERS.items():
         if re.match(obj.file_pattern_re, file_path):
             ret.append([obj.priority, obj])
     if not ret:
+        logger.error(f"No splitter found for file: '{file_path}'. Supported splitters: {list(FILE_SPLITTERS.keys())}")
         raise AttributeError(
             f"No splitter found for file: '{file_path}'. Supported splitters: {list(FILE_SPLITTERS.keys())}"
         )
 
-    return sorted(ret, key=lambda x: x[0])[-1][1]
+    selected_splitter = sorted(ret, key=lambda x: x[0])[-1][1]
+    logger.debug(f"Selected splitter: {selected_splitter.__name__} for file: {file_path}")
+    return selected_splitter
 
 
 @dataclass
@@ -114,9 +121,16 @@ class PdfSplitter(FileSplitter):
         :param file_path: Path to the PDF file to be split.
         :return: A list of Document objects resulting from the split.
         """
-        loader = PyPDFLoader(file_path, extraction_mode="plain", extract_images=False)
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100, length_function=len)
-        return loader.load_and_split(text_splitter=text_splitter)
+        logger.info(f"Processing PDF file: {file_path}")
+        try:
+            loader = PyPDFLoader(file_path, extraction_mode="plain", extract_images=False)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100, length_function=len)
+            documents = loader.load_and_split(text_splitter=text_splitter)
+            logger.debug(f"PDF split into {len(documents)} chunks")
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to process PDF file {file_path}: {e}")
+            raise
 
 
 @dataclass(eq=False)
@@ -140,9 +154,16 @@ class TxtSplitter(FileSplitter):
         :param file_path: Path to the text or log file to be split.
         :return: A list of Document objects resulting from the split.
         """
-        loader = TextLoader(file_path)
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=50)
-        return loader.load_and_split(text_splitter=text_splitter)
+        logger.info(f"Processing text file: {file_path}")
+        try:
+            loader = TextLoader(file_path)
+            text_splitter = RecursiveCharacterTextSplitter(chunk_size=3000, chunk_overlap=50)
+            documents = loader.load_and_split(text_splitter=text_splitter)
+            logger.debug(f"Text file split into {len(documents)} chunks")
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to process text file {file_path}: {e}")
+            raise
 
 
 @dataclass(eq=False)
@@ -158,17 +179,24 @@ class MdSplitter(FileSplitter):
 
     @classmethod
     def split(cls, file_path: str) -> List[Document]:
-        """Split a text or log file into documents.
+        """Split a markdown file into documents.
 
-        Loads a text or log file and splits it into smaller chunks using a character-based
+        Loads a markdown file and splits it into smaller chunks using a markdown-aware
         text splitter for further processing.
 
-        :param file_path: Path to the text or log file to be split.
+        :param file_path: Path to the markdown file to be split.
         :return: A list of Document objects resulting from the split.
         """
-        loader = TextLoader(file_path)
-        text_splitter = MarkdownTextSplitter(chunk_size=1500, chunk_overlap=150)
-        return loader.load_and_split(text_splitter=text_splitter)
+        logger.info(f"Processing markdown file: {file_path}")
+        try:
+            loader = TextLoader(file_path)
+            text_splitter = MarkdownTextSplitter(chunk_size=1500, chunk_overlap=150)
+            documents = loader.load_and_split(text_splitter=text_splitter)
+            logger.debug(f"Markdown file split into {len(documents)} chunks")
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to process markdown file {file_path}: {e}")
+            raise
 
 
 @dataclass(eq=False)
@@ -196,20 +224,28 @@ class PdfLlmSplitter(FileSplitter):
         :param file_path: Path to the PDF file to be split.
         :return: A list of Document objects resulting from the split.
         """
-        # Convert PDF to images
-        images = cls._convert_pdf_to_images(file_path)
+        logger.info(f"Processing PDF file with LLM vision: {file_path}")
+        try:
+            # Convert PDF to images
+            logger.debug("Converting PDF pages to images")
+            images = cls._convert_pdf_to_images(file_path)
+            logger.debug(f"Converted {len(images)} pages to images")
 
-        # Process all pages with LLM
-        combined_markdown = cls._process_all_pages(images)
+            # Process all pages with LLM
+            logger.debug("Processing pages with LLM vision model")
+            combined_markdown = cls._process_all_pages(images)
 
-        # Split the combined markdown using MarkdownTextSplitter
-        text_splitter = MarkdownTextSplitter(chunk_size=1500, chunk_overlap=150)
+            # Split the combined markdown using MarkdownTextSplitter
+            text_splitter = MarkdownTextSplitter(chunk_size=1500, chunk_overlap=150)
 
-        # Create a temporary document to split
-        temp_doc = Document(page_content=combined_markdown, metadata={"source": file_path})
-        documents = text_splitter.split_documents([temp_doc])
-
-        return documents
+            # Create a temporary document to split
+            temp_doc = Document(page_content=combined_markdown, metadata={"source": file_path})
+            documents = text_splitter.split_documents([temp_doc])
+            logger.debug(f"LLM-processed PDF split into {len(documents)} chunks")
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to process PDF file with LLM {file_path}: {e}")
+            raise
 
     @classmethod
     def _convert_pdf_to_images(cls, pdf_path: str) -> List[Image.Image]:
@@ -266,6 +302,7 @@ class PdfLlmSplitter(FileSplitter):
         :param chat_model: Initialized chat model with vision capabilities.
         :return: Extracted markdown content for the page.
         """
+        logger.debug(f"Processing page {page_num} with LLM")
         try:
             # Convert image to base64
             image_base64 = cls._image_to_base64(image)
@@ -289,11 +326,13 @@ class PdfLlmSplitter(FileSplitter):
 
             # Extract content
             markdown_content = response.content
+            logger.debug(f"Successfully processed page {page_num}")
 
             # return f"\n\n## Page {page_num}\n\n{markdown_content}\n"
             return "\n" + markdown_content + "\n"
 
         except Exception as e:
+            logger.error(f"Failed to process page {page_num}: {e}")
             return f"\n\n## Page {page_num}\n\n[ERROR: Page {page_num} processing failed - {str(e)}]\n"
 
     @classmethod
@@ -305,8 +344,11 @@ class PdfLlmSplitter(FileSplitter):
         :param images: List of PIL Image objects.
         :return: Combined markdown content from all pages.
         """
+        logger.info(f"Starting parallel processing of {len(images)} pages")
+
         # Initialize Azure OpenAI or OpenAI model using init_chat_model
         if os.getenv("AZURE_OPENAI_ENDPOINT"):
+            logger.debug("Using Azure OpenAI model")
             chat_model = init_chat_model(
                 model="gpt-4.1",
                 model_provider="azure_openai",
@@ -316,6 +358,7 @@ class PdfLlmSplitter(FileSplitter):
                 max_tokens=16384,
             )
         else:
+            logger.debug("Using OpenAI model")
             chat_model = init_chat_model(
                 model="gpt-4.1",
                 model_provider="openai",
@@ -338,11 +381,13 @@ class PdfLlmSplitter(FileSplitter):
                     result = future.result()
                     results[page_idx] = result
                 except Exception as e:
+                    logger.error(f"Page {page_idx + 1} processing failed: {e}")
                     error_msg = f"\n\n## Page {page_idx + 1}\n\n[ERROR: Page {page_idx + 1} failed - {str(e)}]\n"
                     results[page_idx] = error_msg
 
         # Combine results in original page order
         combined_markdown = "".join(results[i] for i in sorted(results.keys()))
+        logger.info(f"Completed parallel processing of {len(images)} pages")
         return combined_markdown
 
 
@@ -372,6 +417,7 @@ class CsvSplitter(FileSplitter):
         :raises FileNotFoundError: If the file at the specified path does not exist.
         :raises IOError: If there is an error opening or reading the file.
         """
+        logger.debug(f"Analyzing CSV structure for file: {file_path}")
         with open(file_path, "r", newline="", encoding="utf-8") as csvfile:
             # Read the first line of the file
             first_line = csvfile.readline().strip()
@@ -381,8 +427,10 @@ class CsvSplitter(FileSplitter):
             try:
                 # Deduce the dialect of the CSV
                 dialect = sniffer.sniff(first_line)
+                logger.debug(f"Detected CSV dialect: delimiter='{dialect.delimiter}', quotechar='{dialect.quotechar}'")
             except csv.Error:
                 # Default to comma if the sniffing fails
+                logger.debug("CSV dialect detection failed, using defaults")
                 dialect = csv.Dialect()
                 dialect.delimiter = ","
                 dialect.quotechar = '"'
@@ -390,6 +438,7 @@ class CsvSplitter(FileSplitter):
             # Determine column names using the detected dialect
             csv_reader = csv.reader([first_line], dialect)
             column_names = next(csv_reader)
+            logger.debug(f"Detected {len(column_names)} columns: {column_names}")
 
         # Return the extracted information
         d = {"delimiter": dialect.delimiter, "fieldnames": column_names}
@@ -407,6 +456,13 @@ class CsvSplitter(FileSplitter):
         :param file_path: The path to the CSV file to be processed.
         :return: A list of Document objects derived from the CSV file.
         """
-        d = cls.analyze_csv_first_line(file_path)
-        loader = CSVLoader(file_path, csv_args=d)
-        return loader.load()
+        logger.info(f"Processing CSV file: {file_path}")
+        try:
+            d = cls.analyze_csv_first_line(file_path)
+            loader = CSVLoader(file_path, csv_args=d)
+            documents = loader.load()
+            logger.debug(f"CSV file split into {len(documents)} documents")
+            return documents
+        except Exception as e:
+            logger.error(f"Failed to process CSV file {file_path}: {e}")
+            raise

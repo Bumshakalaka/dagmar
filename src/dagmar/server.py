@@ -1,12 +1,17 @@
 """MCP server for the Dagmar RAG."""
 
+import argparse
+import logging
 import signal
 import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from dagmar.logging_config import setup_logging
 from dagmar.store import QdrantStore
+
+logger = logging.getLogger(__name__)
 
 # instantiate an MCP server client
 mcp = FastMCP("Dagmar RAG")
@@ -38,13 +43,24 @@ def dagmar_doc_search(
         for the top-k most relevant document sections.
 
     """
-    if not Path(file_path).exists():
-        raise FileNotFoundError(f"File {file_path} does not exist")
-    if not Path(file_path).is_file():
-        raise NotADirectoryError(f"File {file_path} is not a file")
-    store = QdrantStore("./qdrant_db")
-    results = store.search_semantic(Path(file_path), query, limit)
-    return results
+    logger.info(f"Received search request: query='{query}', file='{file_path}', limit={limit}")
+    try:
+        if not Path(file_path).exists():
+            logger.error(f"File not found: {file_path}")
+            raise FileNotFoundError(f"File {file_path} does not exist")
+        if not Path(file_path).is_file():
+            logger.error(f"Path is not a file: {file_path}")
+            raise NotADirectoryError(f"File {file_path} is not a file")
+
+        logger.debug("Initializing QdrantStore")
+        store = QdrantStore("./qdrant_db")
+        logger.debug(f"Performing semantic search with limit={limit}")
+        results = store.search_semantic(Path(file_path), query, limit)
+        logger.info(f"Search completed, returning {len(results)} results")
+        return results
+    except Exception as e:
+        logger.error(f"Search request failed: {e}")
+        raise
 
 
 def sigint_handler(signum, frame):  # noqa: ARG001
@@ -54,11 +70,26 @@ def sigint_handler(signum, frame):  # noqa: ARG001
 
 def main():
     """Entry point for the package."""
+    parser = argparse.ArgumentParser(description="Dagmar RAG MCP Server")
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="WARNING",
+        help="Set the logging level (default: WARNING)",
+    )
+
+    args = parser.parse_args()
+
+    # Initialize logging
+    setup_logging(args.log_level)
+
+    logger.info("Starting Dagmar RAG MCP Server")
     signal.signal(signal.SIGINT, sigint_handler)
 
     try:
         mcp.run(transport="stdio")
-    except Exception:
+    except Exception as e:
+        logger.error(f"Server failed to start: {e}")
         raise
 
 

@@ -5,6 +5,7 @@ and performing similarity searches with hybrid retrieval capabilities including
 dense and sparse embeddings with reranking.
 """
 
+import logging
 import pprint
 from pathlib import Path
 from typing import List, Literal
@@ -17,6 +18,8 @@ from qdrant_client import QdrantClient, models
 
 from dagmar.my_qdrant_vector_store import MyQdrantVectorStore
 from dagmar.splitters import get_splitter
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantStore:
@@ -37,10 +40,15 @@ class QdrantStore:
         cross-encoder reranker for document retrieval and ranking.
 
         """
+        logger.info(f"Initializing QdrantStore with location: {location}")
         self.client = QdrantClient(":memory:") if location == ":memory:" else QdrantClient(path=location)
+        logger.debug("Loading dense embedding model: sentence-transformers/all-MiniLM-L6-v2")
         self.dense = FastEmbedEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", batch_size=128)
+        logger.debug("Loading sparse embedding model: prithivida/Splade_PP_en_v1")
         self.sparse = FastEmbedSparse(model_name="prithivida/Splade_PP_en_v1", batch_size=128)
+        logger.debug("Loading reranker model: Xenova/ms-marco-MiniLM-L-6-v2")
         self.reranker = TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
+        logger.info("QdrantStore initialization completed")
 
     def _init_colection(self, collection_name: str) -> tuple[MyQdrantVectorStore, bool]:
         """Initialize or retrieve existing Qdrant collection.
@@ -57,6 +65,7 @@ class QdrantStore:
         """
         exists = True
         if not self.client.collection_exists(collection_name):
+            logger.info(f"Creating new collection: {collection_name}")
             self.client.create_collection(
                 collection_name=collection_name,
                 vectors_config={
@@ -67,6 +76,8 @@ class QdrantStore:
                 },
             )
             exists = False
+        else:
+            logger.debug(f"Using existing collection: {collection_name}")
         vector_store = MyQdrantVectorStore(
             client=self.client,
             collection_name=collection_name,
@@ -87,6 +98,7 @@ class QdrantStore:
             collection_name: Name of the collection to create index for.
 
         """
+        logger.info(f"Creating text index for collection: {collection_name}")
         self.client.create_payload_index(
             collection_name=collection_name,
             field_name="page_content",
@@ -99,6 +111,7 @@ class QdrantStore:
             ),
             wait=True,  # Wait for index creation to complete
         )
+        logger.debug("Text index creation completed")
 
     def _add_documents(self, v_store: MyQdrantVectorStore, documents: List[Document]):
         """Add documents to the vector store.
@@ -108,7 +121,9 @@ class QdrantStore:
             documents: List of Document objects to be added to the store.
 
         """
+        logger.info(f"Adding {len(documents)} documents to vector store")
         v_store.add_documents(documents)
+        logger.debug("Documents added successfully")
 
     def _search_documents(self, v_store: MyQdrantVectorStore, query: str, k: int = 4):
         """Search for documents similar to the query.
@@ -161,22 +176,38 @@ class QdrantStore:
             for the top-k most relevant document sections.
 
         """
-        v_store, exists = self._init_colection(doc_path.name)
-        if not exists:
-            splitter = get_splitter(str(doc_path))
-            documents = splitter.split(str(doc_path))
-            self._add_documents(v_store, documents)
-            self._create_index(doc_path.name)
-        results = self._search_documents(v_store, query, k * 2 if k >= 5 else 10)
-        reranked_results = self._rerank(query, results, k)
-        return [
-            {
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "score": score,
-            }
-            for doc, score in reranked_results
-        ]
+        logger.info(f"Starting semantic search for query: '{query}' in file: {doc_path}")
+        try:
+            v_store, exists = self._init_colection(doc_path.name)
+            if not exists:
+                logger.info(f"Document not indexed, processing: {doc_path}")
+                splitter = get_splitter(str(doc_path))
+                documents = splitter.split(str(doc_path))
+                self._add_documents(v_store, documents)
+                self._create_index(doc_path.name)
+            else:
+                logger.debug(f"Using existing index for: {doc_path}")
+
+            search_k = k * 2 if k >= 5 else 10
+            logger.debug(f"Performing initial search with k={search_k}")
+            results = self._search_documents(v_store, query, search_k)
+            logger.debug(f"Initial search returned {len(results)} results")
+
+            logger.debug(f"Reranking results to top {k}")
+            reranked_results = self._rerank(query, results, k)
+            logger.info(f"Semantic search completed, returning {len(reranked_results)} results")
+
+            return [
+                {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": score,
+                }
+                for doc, score in reranked_results
+            ]
+        except Exception as e:
+            logger.error(f"Semantic search failed for query '{query}' in file {doc_path}: {e}")
+            raise
 
     def search_by_fields(self, doc_path: Path, query: str, k: int = 4):
         """Search documents using keyword-based filtering.
@@ -195,28 +226,40 @@ class QdrantStore:
             for matching document sections.
 
         """
-        v_store, exists = self._init_colection(doc_path.name)
-        if not exists:
-            splitter = get_splitter(str(doc_path))
-            documents = splitter.split(str(doc_path))
-            self._add_documents(v_store, documents)
-            self._create_index(doc_path.name)
-        results = v_store.search_by_fields(query, k)
-        return [
-            {
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "score": score,
-            }
-            for doc, score in results
-        ]
+        logger.info(f"Starting field-based search for query: '{query}' in file: {doc_path}")
+        try:
+            v_store, exists = self._init_colection(doc_path.name)
+            if not exists:
+                logger.info(f"Document not indexed, processing: {doc_path}")
+                splitter = get_splitter(str(doc_path))
+                documents = splitter.split(str(doc_path))
+                self._add_documents(v_store, documents)
+                self._create_index(doc_path.name)
+            else:
+                logger.debug(f"Using existing index for: {doc_path}")
+
+            logger.debug(f"Performing field-based search with k={k}")
+            results = v_store.search_by_fields(query, k)
+            logger.info(f"Field-based search completed, returning {len(results)} results")
+
+            return [
+                {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": score,
+                }
+                for doc, score in results
+            ]
+        except Exception as e:
+            logger.error(f"Field-based search failed for query '{query}' in file {doc_path}: {e}")
+            raise
 
 
 if __name__ == "__main__":
     store = QdrantStore("./qdrant_db")
-    results = store.search_by_fields(
-        Path("/home/totyz/Downloads/Amazon_Sidewalk_Test_Specification-1.0-rev-A.4.md"),
-        "page_content like 'BLE/EP/CONN/DUP/BV/04'",
+    results = store.search_semantic(
+        Path("/home/totyz/repos/farag/output/FAR-1603/attachments/FAR-1603_Report_rev1.0.pdf"),
+        "abnormal voltages on pin 97",
         2,
     )
     pprint.pprint(results)

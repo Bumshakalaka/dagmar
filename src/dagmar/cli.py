@@ -7,6 +7,7 @@ vector database with hybrid retrieval and reranking capabilities.
 import argparse
 from pathlib import Path
 
+from dagmar.logging_config import setup_logging
 from dagmar.store import QdrantStore
 
 
@@ -48,12 +49,22 @@ Examples:
     )
 
     parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="WARNING",
+        help="Set the logging level (default: WARNING)",
+    )
+
+    parser.add_argument(
         "query",
         type=str,
         help="Search query to find relevant content",
     )
 
     args = parser.parse_args()
+
+    # Initialize logging
+    setup_logging(args.log_level)
 
     # Validate file exists
     file_path = Path(args.file)
