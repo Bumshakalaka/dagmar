@@ -26,6 +26,7 @@ dev = [
 [project.scripts]
 dagmar = "dagmar.cli:main"
 dagmar-server = "dagmar.server:main"
+md-fixer = "dagmar.md_fixer:main"
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
