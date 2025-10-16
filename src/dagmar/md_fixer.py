@@ -25,6 +25,7 @@ import argparse
 import logging
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import List, Optional
 
@@ -253,6 +254,35 @@ class MarkdownFixer:
         self.prev_header_level: int = 0
         self.cleaners: List[MarkdownCleaner] = cleaners or []
 
+    def process_content(self, content: str, file_name: Optional[str] = None) -> str:
+        """Process markdown content and fix issues.
+
+        Args:
+            content: Markdown content to process
+            file_name: Name of the file to use for the temporary file
+
+        Returns:
+            Processed markdown content
+
+        """
+        if file_name:
+            prefix = file_name
+        else:
+            prefix = "dagmar_"
+        with (
+            tempfile.NamedTemporaryFile(
+                delete=True, suffix=".md", mode="w+", encoding="utf-8", prefix=prefix
+            ) as temp_file,
+            tempfile.NamedTemporaryFile(
+                delete=True, suffix=".md", mode="w+", encoding="utf-8", prefix="output_"
+            ) as temp_file_output,
+        ):
+            temp_file.write(content)
+            temp_file.flush()
+            temp_file_path = temp_file.name
+            self.process_file(Path(temp_file_path), Path(temp_file_output.name))
+            return temp_file_output.read()
+
     def process_file(self, input_path: Path, output_path: Path) -> bool:
         """Process a markdown file and fix issues.
 
@@ -270,7 +300,6 @@ class MarkdownFixer:
             content = input_path.read_text(encoding="utf-8")
         except Exception as e:
             logger.error(f"Error reading file: {e}")
-            print(f"Error reading file: {e}", file=sys.stderr)
             sys.exit(1)
 
         lines = content.splitlines(keepends=False)
@@ -280,7 +309,6 @@ class MarkdownFixer:
         self._fix_lines(lines)
 
         # Check and add missing H1 (after processing lines)
-        # Disable for now as it's not working correctly - DO NOT FIX THIS
         self._add_missing_h1(input_path.stem)
 
         # Remove excess blank lines (3+ consecutive → 2)
@@ -294,15 +322,13 @@ class MarkdownFixer:
             self._remove_excess_blank_lines()
 
         # Report and write results
+        output_path.write_text("\n".join(self.fixed_lines) + "\n", encoding="utf-8")
         if self.issues:
-            logger.debug(f"Found {len(self.issues)} issues to fix")
-            self._report_issues(output_path)
-            output_path.write_text("\n".join(self.fixed_lines) + "\n", encoding="utf-8")
-            logger.info(f"Fixed file written to: {output_path}")
+            logger.info(f"Found {len(self.issues)} issues to fix")
+            self._report_issues()
             return True
         else:
             logger.info("No issues found in markdown file")
-            print("✓ No issues found")
             return False
 
     def _fix_lines(self, lines: List[str]) -> None:
@@ -556,17 +582,10 @@ class MarkdownFixer:
 
         self.fixed_lines = result
 
-    def _report_issues(self, output_path: Path) -> None:
-        """Report found issues to stdout.
-
-        Args:
-            output_path: Path where fixed file will be written
-
-        """
-        print(f"Found {len(self.issues)} issue(s):")
+    def _report_issues(self) -> None:
+        """Report found issues to stdout."""
         for msg in self.issues:
-            print(f"  • {msg}")
-        print(f"\n✓ Fixed file written → {output_path}")
+            logger.debug(f"  • {msg}")
 
 
 def main() -> None:
@@ -619,7 +638,6 @@ Examples:
     # Validate input file exists
     if not args.input.exists():
         logger.error(f"Input file not found: {args.input}")
-        print(f"Error: Input file not found: {args.input}", file=sys.stderr)
         sys.exit(1)
 
     # Determine output path
@@ -641,7 +659,6 @@ Examples:
                 logger.debug("Added TocRemoverCleaner")
             else:
                 logger.warning(f"Unknown cleaner '{name}', skipping...")
-                print(f"Warning: Unknown cleaner '{name}', skipping...", file=sys.stderr)
 
     # Process file
     logger.info(f"Starting markdown processing with {len(cleaners)} cleaners")

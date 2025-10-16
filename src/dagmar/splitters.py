@@ -14,15 +14,17 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 import fitz  # PyMuPDF
 from dotenv import find_dotenv, load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_community.document_loaders import CSVLoader, PyPDFLoader, TextLoader
 from langchain_core.documents import Document
-from langchain_text_splitters import MarkdownTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, MarkdownTextSplitter, RecursiveCharacterTextSplitter
 from PIL import Image
+
+from dagmar.md_fixer import MarkdownFixer
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,7 @@ class FileSplitter:
 
     file_pattern_re: str
     priority: int
+    use_cache: bool = False
 
     def __init_subclass__(cls, **kwargs):
         """Automatically register subclasses in `FILE_SPLITTERS`.
@@ -84,6 +87,7 @@ class FileSplitter:
                 os.getenv("AZURE_OPENAI_ENDPOINT") or os.getenv("OPENAI_API_KEY")
             ):
                 # If .env is not set, skip the PdfLlmSplitter
+                logger.warning("Azure OpenAI or OpenAI API key not set, skipping PdfLlmSplitter")
                 return
             FILE_SPLITTERS[cls.__name__] = cls
 
@@ -99,6 +103,61 @@ class FileSplitter:
         """
         raise NotImplementedError
 
+    @classmethod
+    def _get_cache_key(cls, file_path: str) -> str:
+        """Generate cache key from filename and modification time.
+
+        :param file_path: Path to the file.
+        :return: Cache key in format {filename_without_ext}_{timestamp}.
+        """
+        file_path_obj = Path(file_path)
+        mtime = int(file_path_obj.stat().st_mtime)
+        return f"{file_path_obj.stem}_{mtime}"
+
+    @classmethod
+    def _get_cache_path(cls, file_path: str) -> Path:
+        """Get the full path to the cached file.
+
+        :param file_path: Path to the original file.
+        :return: Path to the cached markdown file.
+        """
+        cache_key = cls._get_cache_key(file_path)
+        cache_dir = Path("./processed_files")
+        return cache_dir / f"{cache_key}.md"
+
+    @classmethod
+    def _load_from_cache(cls, file_path: str) -> Optional[str]:
+        """Load processed content from cache if it exists.
+
+        :param file_path: Path to the original file.
+        :return: Cached markdown content if exists, None otherwise.
+        """
+        cache_path = cls._get_cache_path(file_path)
+        if cache_path.exists():
+            logger.debug(f"Loading from cache: {cache_path}")
+            try:
+                return cache_path.read_text(encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Failed to load cache file {cache_path}: {e}")
+                return None
+        return None
+
+    @classmethod
+    def _save_to_cache(cls, file_path: str, content: str) -> None:
+        """Save processed content to cache.
+
+        :param file_path: Path to the original file.
+        :param content: Markdown content to cache.
+        """
+        cache_path = cls._get_cache_path(file_path)
+        try:
+            # Ensure cache directory exists
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(content, encoding="utf-8")
+            logger.debug(f"Saved to cache: {cache_path}")
+        except Exception as e:
+            logger.warning(f"Failed to save cache file {cache_path}: {e}")
+
 
 @dataclass(eq=False)
 class PdfSplitter(FileSplitter):
@@ -110,22 +169,46 @@ class PdfSplitter(FileSplitter):
 
     file_pattern_re = r".+\.pdf"
     priority: int = 1
+    use_cache: bool = True
 
     @classmethod
     def split(cls, file_path: str) -> List[Document]:
         """Split a PDF file into documents.
 
         Loads a PDF file and splits it into smaller chunks using a character-based
-        text splitter for further processing.
+        text splitter for further processing. Uses caching to avoid reprocessing unchanged files.
 
         :param file_path: Path to the PDF file to be split.
         :return: A list of Document objects resulting from the split.
         """
         logger.info(f"Processing PDF file: {file_path}")
         try:
-            loader = PyPDFLoader(file_path, extraction_mode="plain", extract_images=False)
+            # Check cache first if caching is enabled
+            extracted_text = None
+            if cls.use_cache:
+                extracted_text = cls._load_from_cache(file_path)
+                if extracted_text is not None:
+                    logger.info(f"Using cached content for {file_path}")
+                else:
+                    logger.debug(f"No cache found for {file_path}")
+
+            # If no cache hit, extract text from PDF
+            if extracted_text is None:
+                loader = PyPDFLoader(file_path, extraction_mode="plain", extract_images=False)
+                documents = loader.load()
+                # Combine all page content into a single text
+                extracted_text = "\n\n".join([doc.page_content for doc in documents])
+
+                # Save to cache if caching is enabled
+                if cls.use_cache:
+                    cls._save_to_cache(file_path, extracted_text)
+
+            # Split the extracted text using RecursiveCharacterTextSplitter
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100, length_function=len)
-            documents = loader.load_and_split(text_splitter=text_splitter)
+
+            # Create a temporary document to split
+            temp_doc = Document(page_content=extracted_text, metadata={"source": file_path})
+            documents = text_splitter.split_documents([temp_doc])
             logger.debug(f"PDF split into {len(documents)} chunks")
             return documents
         except Exception as e:
@@ -210,6 +293,7 @@ class PdfLlmSplitter(FileSplitter):
 
     file_pattern_re = r".+\.pdf"
     priority: int = 10  # Higher priority than regular PdfSplitter
+    use_cache: bool = True
 
     # LLM prompt for structured markdown extraction
     EXTRACTION_PROMPT = (Path(__file__).parent / "image_to_md_prompt.md").read_text()
@@ -220,27 +304,44 @@ class PdfLlmSplitter(FileSplitter):
 
         Converts PDF pages to images, processes them with Azure OpenAI vision model
         to extract structured markdown, then splits the result into documents.
+        Uses caching to avoid reprocessing unchanged files.
 
         :param file_path: Path to the PDF file to be split.
         :return: A list of Document objects resulting from the split.
         """
         logger.info(f"Processing PDF file with LLM vision: {file_path}")
         try:
-            # Convert PDF to images
-            logger.debug("Converting PDF pages to images")
-            images = cls._convert_pdf_to_images(file_path)
-            logger.debug(f"Converted {len(images)} pages to images")
+            # Check cache first if caching is enabled
+            combined_markdown = None
+            if cls.use_cache:
+                combined_markdown = cls._load_from_cache(file_path)
+                if combined_markdown is not None:
+                    logger.info(f"Using cached content for {file_path}")
+                else:
+                    logger.debug(f"No cache found for {file_path}")
 
-            # Process all pages with LLM
-            logger.debug("Processing pages with LLM vision model")
-            combined_markdown = cls._process_all_pages(images)
+            # If no cache hit, process with LLM
+            if combined_markdown is None:
+                # Convert PDF to images
+                logger.debug("Converting PDF pages to images")
+                images = cls._convert_pdf_to_images(file_path)
+                logger.debug(f"Converted {len(images)} pages to images")
+
+                # Process all pages with LLM
+                logger.debug("Processing pages with LLM vision model")
+                combined_markdown = cls._process_all_pages(images)
+
+                # Save to cache if caching is enabled
+                if cls.use_cache:
+                    cls._save_to_cache(file_path, combined_markdown)
+
+            logger.debug("Fixing markdown")
+            fixer = MarkdownFixer()
+            combined_markdown = fixer.process_content(combined_markdown, Path(file_path).stem)
 
             # Split the combined markdown using MarkdownTextSplitter
-            text_splitter = MarkdownTextSplitter(chunk_size=1500, chunk_overlap=150)
-
-            # Create a temporary document to split
-            temp_doc = Document(page_content=combined_markdown, metadata={"source": file_path})
-            documents = text_splitter.split_documents([temp_doc])
+            text_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=[("##", "H2")], strip_headers=False)
+            documents = text_splitter.split_text(combined_markdown)
             logger.debug(f"LLM-processed PDF split into {len(documents)} chunks")
             return documents
         except Exception as e:
