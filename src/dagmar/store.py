@@ -6,10 +6,13 @@ dense and sparse embeddings with reranking.
 """
 
 import logging
+import os
 import pprint
+import re
 from pathlib import Path
-from typing import List, Literal
+from typing import List
 
+from dotenv import find_dotenv, load_dotenv
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_core.documents import Document
@@ -21,6 +24,9 @@ from dagmar.splitters import get_splitter
 
 logger = logging.getLogger(__name__)
 
+load_dotenv(find_dotenv())
+QDRANT_URL = os.getenv("QDRANT_URL", "./qdrant_db")
+
 
 class QdrantStore:
     """Document storage and retrieval system using Qdrant vector database.
@@ -30,18 +36,43 @@ class QdrantStore:
     capabilities including dense and sparse embeddings with reranking.
     """
 
-    def __init__(self, location: str | Literal[":memory:"]):
+    def __init__(self):
         """Initialize QdrantStore with embedding models and reranker.
-
-        Args:
-            location: Path to Qdrant database or ":memory:" for in-memory storage.
 
         Sets up the Qdrant client, dense and sparse embedding models, and
         cross-encoder reranker for document retrieval and ranking.
 
+        Args:
+            location: from QDRANT_URL environment variable.
+                - Path to Qdrant database or ":memory:" for in-memory storage
+                - URL to Qdrant server
+                - URL to Qdrant server with port
+
+        Raises:
+            ValueError: If the QDRANT_URL format is invalid.
+            FileNotFoundError: If the QDRANT_URL is a path to a directory that does not exist.
+            NotADirectoryError: If the QDRANT_URL is a path to a file that is not a directory.
+            Exception: If there is an error initializing the Qdrant client.
+
         """
-        logger.info(f"Initializing QdrantStore with location: {location}")
-        self.client = QdrantClient(":memory:") if location == ":memory:" else QdrantClient(path=location)
+        logger.info(f"Initializing QdrantStore with location: {QDRANT_URL}")
+        if QDRANT_URL == ":memory:":
+            self.client = QdrantClient(":memory:")
+        elif QDRANT_URL.startswith("http"):
+            # Acceptable formats: http://host[:port]
+            match = re.match(r"(https?)://([^:/]+)(?::(\d+))?", QDRANT_URL)
+            if not match:
+                raise ValueError(f"Invalid QDRANT_URL format: {QDRANT_URL}")
+
+            proto, host, port = match.groups()
+            port = int(port) if port else 6333
+            self.client = QdrantClient(url=f"{proto}://{host}", port=port)
+        else:
+            if not Path(QDRANT_URL).parent.exists():
+                raise FileNotFoundError(f"Directory {Path(QDRANT_URL).parent} does not exist")
+            if not Path(QDRANT_URL).is_dir():
+                raise NotADirectoryError(f"Path {QDRANT_URL} is not a directory")
+            self.client = QdrantClient(path=QDRANT_URL)
         logger.debug("Loading dense embedding model: sentence-transformers/all-MiniLM-L6-v2")
         self.dense = FastEmbedEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", batch_size=128)
         logger.debug("Loading sparse embedding model: prithivida/Splade_PP_en_v1")
@@ -256,10 +287,10 @@ class QdrantStore:
 
 
 if __name__ == "__main__":
-    store = QdrantStore("./qdrant_db")
+    store = QdrantStore()
     results = store.search_semantic(
-        Path("/home/totyz/repos/farag/output/FAR-1603/attachments/FAR-1603_Report_rev1.0.pdf"),
-        "abnormal voltages on pin 97",
+        Path("/home/totyz/Documents/Sidewalk/Amazon_Sidewalk_Test_Specification-1.0-rev-A.4.pdf"),
+        "BLE/EP/CONN/DUP/BV/01",
         2,
     )
     pprint.pprint(results)

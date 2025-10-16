@@ -34,6 +34,13 @@ cd dagmar
 # Install with uv
 uv sync
 
+# Set the QDRANT_URL key in .env file to the path to the Qdrant database.
+# QDRANT_URL=./qdrant_db
+# or
+# QDRANT_URL=http://localhost
+# or
+# QDRANT_URL=:memory:
+
 # to use LLM vision model for pdf processing, you need to set up Azure OpenAI or OpenAI API keys in .env file
 # AZURE_OPENAI_ENDPOINT=https://<your-resource-name>.openai.azure.com/
 # AZURE_OPENAI_API_KEY=<your-api-key>
@@ -178,7 +185,9 @@ dagmar/
 
 ### Vector Database
 
-The system uses a local Qdrant database stored in `./qdrant_db/` by default. Each document gets its own collection named after the file.
+The system uses a local Qdrant database stored in `./qdrant_db/` by default. This can be changed by setting the `QDRANT_URL` environment variable.
+
+Each document gets its own collection named after the file.
 
 ### Embedding Configuration
 
@@ -201,7 +210,7 @@ from dagmar.store import QdrantStore
 from pathlib import Path
 
 # Initialize the store
-store = QdrantStore("./qdrant_db")
+store = QdrantStore()
 
 # Search in a document
 results = store.search_semantic(
@@ -273,7 +282,8 @@ When using keyword-based field filtering (`--fields` option), you can use struct
 - [x] Add MCP server only stdio
 - [ ] Add store method to get complete page of document (filter by page field and group and return)
 - [x] Add LLM pdf parser (image-to-text)
-- [ ] Add support for Qdrant server
+- [x] Add support for Qdrant server
 - [ ] Add tests
 - [ ] Allow to update payload in collection. E.g. while working with dokument, user would like to add some information to payload for further better search results.
 - [ ] Search in multiple files
+- [ ] Note - the all payload keys goes to metadata dict in Qdrant except page_content

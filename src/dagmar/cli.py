@@ -76,7 +76,7 @@ Examples:
 
     # Initialize store and perform search
     try:
-        store = QdrantStore("./qdrant_db")
+        store = QdrantStore()
         if args.fields:
             results = store.search_by_fields(file_path, args.query, args.results)
         else:

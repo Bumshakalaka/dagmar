@@ -53,7 +53,7 @@ def dagmar_doc_search(
             raise NotADirectoryError(f"File {file_path} is not a file")
 
         logger.debug("Initializing QdrantStore")
-        store = QdrantStore("./qdrant_db")
+        store = QdrantStore()
         logger.debug(f"Performing semantic search with limit={limit}")
         results = store.search_semantic(Path(file_path), query, limit)
         logger.info(f"Search completed, returning {len(results)} results")

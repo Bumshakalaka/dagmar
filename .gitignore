@@ -9,8 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
-# Cursor
+# IDE
 .cursor
+.vscode
+.idea
 
 qdrant_db/
+processed_files/
 .env
