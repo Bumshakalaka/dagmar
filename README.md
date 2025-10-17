@@ -10,6 +10,7 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 - **Keyword-Based Filtering**: Support for structured field queries with logical operators
 - **Reranking**: Uses cross-encoder models to rerank results for better relevance
 - **Multi-Format Support**: Handles PDF, Markdown, Text, and CSV files automatically
+- **Multi-Document Search**: Search across multiple documents using regex patterns
 - **LLM-Based PDF Processing**: Advanced PDF extraction using Azure OpenAI vision models for structured content
 - **Local Vector Database**: Stores embeddings locally using Qdrant for privacy and performance
 - **Automatic Indexing**: Documents are processed and indexed on-demand
@@ -59,25 +60,28 @@ uv sync
 Search for content in a document using natural language queries:
 
 ```bash
-dagmar --file document.pdf "What is the main topic discussed?"
+dagmar --source document.pdf "What is the main topic discussed?"
 ```
 
 ### Advanced Search Options
 
 ```bash
 # Specify number of results (default: 4)
-dagmar --results 10 --file report.md "Summarize the key findings"
+dagmar --results 10 --source report.md "Summarize the key findings"
 
 # Keyword-based field filtering (structured queries)
-dagmar --fields --file document.pdf "page_content like 'important keyword'"
+dagmar --fields --source document.pdf "page_content like 'important keyword'"
+
+# Search across multiple files using regex pattern
+dagmar --source "*.manual.*\.pdf" "implementation details"
 
 # Short form options
-dagmar -k 5 -f data.csv "Show me entries with status=active"
+dagmar -k 5 -s data.csv "Show me entries with status=active"
 ```
 
 ### Command Line Options
 
-- `-f, --file`: Path to the document file (required)
+- `-f, --source`: Path to the document file to search in, or a regex pattern to match multiple file names when searching across documents (required)
 - `-k, --results`: Number of search results to return (default: 4)
 - `--fields`: Use keyword-based field search instead of semantic search (default: false)
 - `query`: Search query (positional argument)
@@ -86,18 +90,21 @@ dagmar -k 5 -f data.csv "Show me entries with status=active"
 
 ```bash
 # Search in a PDF document
-dagmar --file manual.pdf "cli usage"
+dagmar --source manual.pdf "cli usage"
 
 # Search in a Markdown file
-dagmar --file notes.md "implementation details"
+dagmar --source notes.md "implementation details"
 
 # Search in a CSV file
-dagmar --file data.csv "filter by category"
+dagmar --source data.csv "filter by category"
+
+# Search across multiple files using regex pattern
+dagmar --source "*.manual.*\.pdf" "implementation details"
 
 # Keyword-based filtering examples
-dagmar --fields --file document.pdf "page_content like 'machine learning'"
-dagmar --fields --file report.md "page_content like 'error' and page_content like 'handling'"
-dagmar --fields --file spec.pdf "(page_content like 'API' or page_content like 'interface') and not page_content like 'deprecated'"
+dagmar --fields --source document.pdf "page_content like 'machine learning'"
+dagmar --fields --source report.md "page_content like 'error' and page_content like 'handling'"
+dagmar --fields --source spec.pdf "(page_content like 'API' or page_content like 'interface') and not page_content like 'deprecated'"
 ```
 
 ## MCP Server
@@ -127,7 +134,7 @@ The MCP server exposes a `dagmar_doc_search` tool that enables semantic document
 #### Tool Parameters
 
 - `query`: Natural language search query
-- `file_path`: Path to the document file to search
+- `source`: Path to the document file to search in, or a regex pattern to match multiple file names when searching across documents
 - `limit`: Number of top results to return (default: 4)
 
 ## Technology Stack
@@ -174,10 +181,24 @@ dagmar/
 │   ├── cli.py                 # Command-line interface
 │   ├── server.py              # MCP server implementation
 │   ├── store.py               # Vector store and search logic
-│   ├── splitters.py           # Document processing utilities
-│   └── parse_filter_string.py # Filter query parsing utilities
+│   ├── parse_filter_string.py # Filter query parsing utilities
+│   ├── splitters/             # Document processing utilities
+│   │   ├── __init__.py
+│   │   ├── base.py            # Base splitter classes
+│   │   ├── csv.py             # CSV file processing
+│   │   ├── md.py              # Markdown file processing
+│   │   ├── pdf.py             # PDF file processing
+│   │   ├── pdf_llm.py         # LLM-based PDF processing
+│   │   ├── txt.py             # Text file processing
+│   │   ├── llm_base.py        # Base LLM splitter utilities
+│   │   └── image_to_md_prompt.md # LLM prompt for image processing
+│   ├── my_qdrant_vector_store.py # Qdrant vector store implementation
+│   ├── md_fixer.py            # Markdown content fixing utilities
+│   └── logging_config.py      # Logging configuration
 ├── qdrant_db/                 # Local vector database
+├── processed_files/           # Processed document storage
 ├── pyproject.toml             # Project configuration
+├── uv.lock                    # Dependency lock file
 └── README.md                  # This file
 ```
 
@@ -285,8 +306,8 @@ When using keyword-based field filtering (`--fields` option), you can use struct
 - [x] Add support for Qdrant server
 - [ ] Add tests
 - [ ] Allow to update payload in collection. E.g. while working with dokument, user would like to add some information to payload for further better search results.
-- [ ] Search in multiple files
+- [x] Search in multiple files
 - [ ] Note - the all payload keys goes to metadata dict in Qdrant except page_content
 - [x] Refactor splitters to put every spliter into separate file in src/dagmar/splitters/ directory
-- [ ] Make LLM splitter more universal and allow to use it for other file types.
+- [x] Make LLM splitter more universal and allow to use it for other file types.
 - [x] Reduce image size to have one dimantion no longer than 1024px

@@ -21,7 +21,7 @@ mcp = FastMCP("Dagmar RAG")
 def dagmar_doc_search(
     ctx: Context,  # noqa: ARG001,ARG002
     query: str,
-    file_path: str,
+    source: str | Path,
     limit: int = 4,
 ):
     """Search for relevant content in a document using vector similarity and hybrid retrieval.
@@ -35,7 +35,8 @@ def dagmar_doc_search(
         ctx: Context object.
         query: Text query to search for relevant content.
                It should be reformulated to get the most relevant information from Vector Database.
-        file_path: Path to the local document file to search in.
+        source: Path to the local document file to search in, or a regex pattern to match
+                 multiple file names when searching across documents.
         limit: Number of top results to return.
 
     Returns:
@@ -43,19 +44,25 @@ def dagmar_doc_search(
         for the top-k most relevant document sections.
 
     """
-    logger.info(f"Received search request: query='{query}', file='{file_path}', limit={limit}")
+    logger.info(f"Received search request: query='{query}', file='{source}', limit={limit}")
     try:
-        if not Path(file_path).exists():
-            logger.error(f"File not found: {file_path}")
-            raise FileNotFoundError(f"File {file_path} does not exist")
-        if not Path(file_path).is_file():
-            logger.error(f"Path is not a file: {file_path}")
-            raise NotADirectoryError(f"File {file_path} is not a file")
+        # Check if source is a file path or regex pattern
+        source_obj = Path(source)
+        if source_obj.exists() and source_obj.is_file():
+            # It's a valid file path, validate it
+            pass  # File exists and is valid
+        elif source_obj.exists():
+            # Path exists but is not a file
+            logger.error(f"Path exists but is not a file: {source}")
+            raise NotADirectoryError(f"Path {source} exists but is not a file")
+        else:
+            # Path doesn't exist - could be a regex pattern, let search_semantic handle it
+            logger.debug(f"Path {source} does not exist - treating as regex pattern")
 
         logger.debug("Initializing QdrantStore")
         store = QdrantStore()
         logger.debug(f"Performing semantic search with limit={limit}")
-        results = store.search_semantic(Path(file_path), query, limit)
+        results = store.search_semantic(source, query, limit)
         logger.info(f"Search completed, returning {len(results)} results")
         return results
     except Exception as e:

@@ -212,14 +212,16 @@ class QdrantStore:
                     ret.append(collection.name)
             return ret
 
-    def search_semantic(self, doc_path: Path, query: str, k: int = 4):
-        """Search for relevant content in a document using vector similarity.
+    def search_semantic(self, source: str | Path, query: str, k: int = 4):
+        """Search for relevant content using vector similarity.
 
-        Processes the document if not already indexed, then performs hybrid search
-        with dense and sparse embeddings followed by reranking.
+        Supports searching in single documents or across multiple collections matching a regex pattern.
+        When searching multiple collections, results are collected from all matching collections
+        before reranking.
 
         Args:
-            doc_path: Path to the document file to search in.
+            source: Path to the document file to search in, or a regex pattern to match
+                     multiple collection names when searching across documents.
             query: Text query to search for relevant content.
             k: Number of top results to return.
 
@@ -228,7 +230,29 @@ class QdrantStore:
             for the top-k most relevant document sections.
 
         """
-        logger.info(f"Starting semantic search for query: '{query}' in file: {doc_path}")
+        logger.info(f"Starting semantic search for query: '{query}' with source: {source}")
+
+        # Determine if source is a file path or regex pattern
+        if isinstance(source, Path) or (isinstance(source, str) and Path(source).exists()):
+            # Single file search
+            return self._search_single_file(Path(source), query, k)
+        else:
+            # Multi-file search with regex pattern
+            return self._search_multiple_files(str(source), query, k)
+
+    def _search_single_file(self, doc_path: Path, query: str, k: int = 4):
+        """Search for relevant content in a single document file.
+
+        Args:
+            doc_path: Path to the document file to search in.
+            query: Text query to search for relevant content.
+            k: Number of top results to return.
+
+        Returns:
+            List of dictionaries containing content, metadata, and relevance scores.
+
+        """
+        logger.info(f"Starting single file semantic search for query: '{query}' in file: {doc_path}")
         try:
             v_store, exists = self._init_colection(doc_path.name)
             if not exists:
@@ -247,7 +271,7 @@ class QdrantStore:
 
             logger.debug(f"Reranking results to top {k}")
             reranked_results = self._rerank(query, results, k)
-            logger.info(f"Semantic search completed, returning {len(reranked_results)} results")
+            logger.info(f"Single file semantic search completed, returning {len(reranked_results)} results")
 
             return [
                 {
@@ -258,8 +282,66 @@ class QdrantStore:
                 for doc, score in reranked_results
             ]
         except Exception as e:
-            logger.error(f"Semantic search failed for query '{query}' in file {doc_path}: {e}")
+            logger.error(f"Single file semantic search failed for query '{query}' in file {doc_path}: {e}")
             raise
+
+    def _search_multiple_files(self, pattern: str, query: str, k: int = 4):
+        """Search for relevant content across multiple collections matching a regex pattern.
+
+        Args:
+            pattern: Regex pattern to match collection names.
+            query: Text query to search for relevant content.
+            k: Number of top results to return.
+
+        Returns:
+            List of dictionaries containing content, metadata, and relevance scores.
+
+        """
+        logger.info(f"Starting multi-collection semantic search for query: '{query}' with pattern: {pattern}")
+
+        # Get all collections matching the pattern
+        collection_names = self.get_indexed_documents(pattern)
+        if not collection_names:
+            logger.warning(f"No collections found matching pattern: {pattern}")
+            return []
+
+        logger.info(f"Found {len(collection_names)} collections matching pattern: {collection_names}")
+
+        # Collect results from all matching collections
+        all_results = []
+        for collection_name in collection_names:
+            try:
+                logger.debug(f"Searching in collection: {collection_name}")
+                v_store, _ = self._init_colection(collection_name)
+
+                # Use a higher k per collection since we'll rerank all together later
+                search_k = (k * 3) // len(collection_names) + 2  # Distribute k across collections
+                results = self._search_documents(v_store, query, search_k)
+                all_results.extend(results)
+                logger.debug(f"Collection {collection_name} returned {len(results)} results")
+            except Exception as e:
+                logger.error(f"Failed to search collection {collection_name}: {e}")
+                continue
+
+        logger.debug(f"Total results collected from all collections: {len(all_results)}")
+
+        if not all_results:
+            logger.warning("No results found in any matching collections")
+            return []
+
+        # Rerank all results together
+        logger.debug(f"Reranking {len(all_results)} total results to top {k}")
+        reranked_results = self._rerank(query, all_results, k)
+        logger.info(f"Multi-collection semantic search completed, returning {len(reranked_results)} results")
+
+        return [
+            {
+                "content": doc.page_content,
+                "metadata": doc.metadata,
+                "score": score,
+            }
+            for doc, score in reranked_results
+        ]
 
     def search_by_fields(self, doc_path: Path, query: str, k: int = 4):
         """Search documents using keyword-based filtering.

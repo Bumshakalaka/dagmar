@@ -19,9 +19,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --results 5 --file document.pdf "What is the main topic?"
+  %(prog)s --results 5 --source document.pdf "What is the main topic?"
   %(prog)s -k 3 -f report.md "Summarize the key findings"
-  %(prog)s --file data.csv "Show me entries with status=active"
+  %(prog)s --source data.csv "Show me entries with status=active"
         """,
     )
 
@@ -34,11 +34,12 @@ Examples:
     )
 
     parser.add_argument(
-        "--file",
-        "-f",
+        "--source",
+        "-s",
         type=str,
         required=True,
-        help="Path to the document file to search in",
+        help="""Path to the document file to search in, 
+        or a regex pattern to match multiple file names when searching across documents.""",
     )
 
     parser.add_argument(
@@ -66,21 +67,27 @@ Examples:
     # Initialize logging
     setup_logging(args.log_level)
 
-    # Validate file exists
-    file_path = Path(args.file)
-    if not file_path.exists():
-        parser.error(f"File '{args.file}' does not exist")
-
-    if not file_path.is_file():
-        parser.error(f"'{args.file}' is not a file")
+    # Validate file exists (only for file-based searches, not regex patterns)
+    source_obj = Path(args.source)
+    if source_obj.exists():
+        # It's a file path - validate it
+        if not source_obj.is_file():
+            parser.error(f"'{args.source}' exists but is not a file")
+        source = source_obj
+    else:
+        # Could be a regex pattern - pass as string
+        source = args.source
 
     # Initialize store and perform search
     try:
         store = QdrantStore()
         if args.fields:
-            results = store.search_by_fields(file_path, args.query, args.results)
+            # search_by_fields still expects a Path object for now
+            if not isinstance(source, Path):
+                parser.error("Field-based search requires a valid file path, not a regex pattern")
+            results = store.search_by_fields(source, args.query, args.results)
         else:
-            results = store.search_semantic(file_path, args.query, args.results)
+            results = store.search_semantic(source, args.query, args.results)
 
         if not results:
             print("No results found.")
