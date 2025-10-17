@@ -10,7 +10,7 @@ import os
 import pprint
 import re
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from dotenv import find_dotenv, load_dotenv
 from fastembed.rerank.cross_encoder import TextCrossEncoder
@@ -191,6 +191,27 @@ class QdrantStore:
         reranked_results.sort(key=lambda x: x[1], reverse=True)
         return reranked_results[0:k]
 
+    def get_indexed_documents(self, pattern: Optional[str] = None) -> List[str]:
+        """Get list of documents matching the pattern.
+
+        Args:
+            pattern: Regular expression pattern to match collection names.
+
+        Returns:
+            List of collection names.
+
+        """
+        logger.info(f"Getting documents matching pattern: {pattern}")
+        ret = []
+        collections = self.client.get_collections()
+        if not pattern:
+            return [collection.name for collection in collections.collections]
+        else:
+            for collection in collections.collections:
+                if re.match(pattern, collection.name):
+                    ret.append(collection.name)
+            return ret
+
     def search_semantic(self, doc_path: Path, query: str, k: int = 4):
         """Search for relevant content in a document using vector similarity.
 
@@ -288,9 +309,10 @@ class QdrantStore:
 
 if __name__ == "__main__":
     store = QdrantStore()
-    results = store.search_semantic(
-        Path("/home/totyz/Documents/Sidewalk/Amazon_Sidewalk_Test_Specification-1.0-rev-A.4.pdf"),
-        "BLE/EP/CONN/DUP/BV/01",
-        2,
-    )
-    pprint.pprint(results)
+    pprint.pprint(store.get_indexed_documents())
+    # results = store.search_semantic(
+    #     Path("/home/totyz/Documents/Sidewalk/Amazon_Sidewalk_Test_Specification-1.0-rev-A.4.pdf"),
+    #     "BLE/EP/CONN/DUP/BV/01",
+    #     2,
+    # )
+    # pprint.pprint(results)
