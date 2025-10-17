@@ -278,7 +278,7 @@ When using keyword-based field filtering (`--fields` option), you can use struct
 
 ## TODO:
 
-- [ ] Add support for pptx and docx files
+- [ ] Add support for pptx and docx files (use markitdown)
 - [x] Add MCP server only stdio
 - [ ] Add store method to get complete page of document (filter by page field and group and return)
 - [x] Add LLM pdf parser (image-to-text)
@@ -287,3 +287,6 @@ When using keyword-based field filtering (`--fields` option), you can use struct
 - [ ] Allow to update payload in collection. E.g. while working with dokument, user would like to add some information to payload for further better search results.
 - [ ] Search in multiple files
 - [ ] Note - the all payload keys goes to metadata dict in Qdrant except page_content
+- [x] Refactor splitters to put every spliter into separate file in src/dagmar/splitters/ directory
+- [ ] Make LLM splitter more universal and allow to use it for other file types.
+- [x] Reduce image size to have one dimantion no longer than 1024px
