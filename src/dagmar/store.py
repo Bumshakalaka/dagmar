@@ -1,400 +1,174 @@
-"""Vector store implementation for document storage and retrieval.
+"""Utilities for managing Qdrant-backed document collections.
 
-This module provides functionality for storing documents in a Qdrant vector database
-and performing similarity searches with hybrid retrieval capabilities including
-dense and sparse embeddings with reranking.
+Provide a `Store` abstraction that connects to a Qdrant instance, tracks
+loaded `StoreDocument` objects, imports existing collections, and performs
+cross-document search with reranking.
 """
 
 import logging
-import os
-import pprint
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from dotenv import find_dotenv, load_dotenv
-from fastembed.rerank.cross_encoder import TextCrossEncoder
-from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_core.documents import Document
-from langchain_qdrant import FastEmbedSparse, RetrievalMode
-from qdrant_client import QdrantClient, models
+from qdrant_client import QdrantClient
 
-from dagmar.my_qdrant_vector_store import MyQdrantVectorStore
-from dagmar.splitters import get_splitter
+from dagmar.store_document import QDRANT_URL, StoreDocument, rerank
 
 logger = logging.getLogger(__name__)
 
-load_dotenv(find_dotenv())
-QDRANT_URL = os.getenv("QDRANT_URL", "./qdrant_db")
 
+class Store:
+    """Manage documents and search operations via a Qdrant client.
 
-class QdrantStore:
-    """Document storage and retrieval system using Qdrant vector database.
-
-    This class provides a high-level interface for storing documents in a Qdrant
-    vector database and performing similarity searches with hybrid retrieval
-    capabilities including dense and sparse embeddings with reranking.
+    The store maintains an in-memory list of `StoreDocument` instances, provides
+    helpers to import collections from Qdrant, and runs searches with optional
+    reranking.
     """
 
-    def __init__(self):
-        """Initialize QdrantStore with embedding models and reranker.
+    def __init__(self, qdrant_server: Optional[str] = None):
+        """Initialize the store and connect to a Qdrant location.
 
-        Sets up the Qdrant client, dense and sparse embedding models, and
-        cross-encoder reranker for document retrieval and ranking.
+        Sets up the Qdrant client connection. The client can connect to a local
+        or remote Qdrant server, or use in-memory storage.
 
         Args:
-            location: from QDRANT_URL environment variable.
-                - Path to Qdrant database or ":memory:" for in-memory storage
-                - URL to Qdrant server
-                - URL to Qdrant server with port
+            qdrant_server: Qdrant location. If ``None``, uses ``QDRANT_URL``.
+                Accepts:
+                - ":memory:" for in-memory storage
+                - Local path to a Qdrant database directory
+                - HTTP/HTTPS URL (e.g., "http://localhost:6333")
 
         Raises:
-            ValueError: If the QDRANT_URL format is invalid.
-            FileNotFoundError: If the QDRANT_URL is a path to a directory that does not exist.
-            NotADirectoryError: If the QDRANT_URL is a path to a file that is not a directory.
-            Exception: If there is an error initializing the Qdrant client.
+            ValueError: If the server URL format is invalid.
+            FileNotFoundError: If the path's parent directory does not exist.
+            NotADirectoryError: If the provided path is not a directory.
 
         """
-        logger.info(f"Initializing QdrantStore with location: {QDRANT_URL}")
-        if QDRANT_URL == ":memory:":
+        if not qdrant_server:
+            qdrant_server = QDRANT_URL
+
+        logger.info(f"Initializing QdrantStore with location: {qdrant_server}")
+        if qdrant_server == ":memory:":
             self.client = QdrantClient(":memory:")
-        elif QDRANT_URL.startswith("http"):
+        elif qdrant_server.startswith("http"):
             # Acceptable formats: http://host[:port]
-            match = re.match(r"(https?)://([^:/]+)(?::(\d+))?", QDRANT_URL)
+            match = re.match(r"(https?)://([^:/]+)(?::(\d+))?", qdrant_server)
             if not match:
-                raise ValueError(f"Invalid QDRANT_URL format: {QDRANT_URL}")
+                raise ValueError(f"Invalid qdrant_server format: {qdrant_server}")
 
             proto, host, port = match.groups()
             port = int(port) if port else 6333
             self.client = QdrantClient(url=f"{proto}://{host}", port=port)
         else:
-            if not Path(QDRANT_URL).parent.exists():
-                raise FileNotFoundError(f"Directory {Path(QDRANT_URL).parent} does not exist")
-            if not Path(QDRANT_URL).is_dir():
-                raise NotADirectoryError(f"Path {QDRANT_URL} is not a directory")
-            self.client = QdrantClient(path=QDRANT_URL)
-        logger.debug("Loading dense embedding model: sentence-transformers/all-MiniLM-L6-v2")
-        self.dense = FastEmbedEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", batch_size=128)
-        logger.debug("Loading sparse embedding model: prithivida/Splade_PP_en_v1")
-        self.sparse = FastEmbedSparse(model_name="prithivida/Splade_PP_en_v1", batch_size=128)
-        logger.debug("Loading reranker model: Xenova/ms-marco-MiniLM-L-6-v2")
-        self.reranker = TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
+            if not Path(qdrant_server).parent.exists():
+                raise FileNotFoundError(f"Directory {Path(qdrant_server).parent} does not exist")
+            if not Path(qdrant_server).is_dir():
+                raise NotADirectoryError(f"Path {qdrant_server} is not a directory")
+            self.client = QdrantClient(path=qdrant_server)
+        self.qdrant_server = qdrant_server
         logger.info("QdrantStore initialization completed")
+        self.documents: List[StoreDocument] = []
 
-    def _init_colection(self, collection_name: str) -> tuple[MyQdrantVectorStore, bool]:
-        """Initialize or retrieve existing Qdrant collection.
-
-        Creates a new collection if it doesn't exist, otherwise returns the existing one.
-
-        Args:
-            collection_name: Name of the collection to initialize or retrieve.
+    @property
+    def docs(self):
+        """Return the list of loaded documents.
 
         Returns:
-            Tuple containing the QdrantVectorStore instance and a boolean indicating
-            whether the collection was newly created (True) or already existed (False).
+            The in-memory list of loaded `StoreDocument` instances.
 
         """
-        exists = True
-        if not self.client.collection_exists(collection_name):
-            logger.info(f"Creating new collection: {collection_name}")
-            self.client.create_collection(
-                collection_name=collection_name,
-                vectors_config={
-                    "dense": models.VectorParams(size=self.dense.model.embedding_size, distance=models.Distance.COSINE)
-                },
-                sparse_vectors_config={
-                    "sparse": models.SparseVectorParams(index=models.SparseIndexParams(on_disk=False))
-                },
-            )
-            exists = False
-        else:
-            logger.debug(f"Using existing collection: {collection_name}")
-        vector_store = MyQdrantVectorStore(
-            client=self.client,
-            collection_name=collection_name,
-            embedding=self.dense,
-            sparse_embedding=self.sparse,
-            retrieval_mode=RetrievalMode.HYBRID,
-            vector_name="dense",
-            sparse_vector_name="sparse",
-        )
-        return vector_store, exists
+        return self.documents
 
-    def _create_index(self, collection_name: str):
-        """Create text index on document content for keyword search.
+    def clean_docs(self):
+        """Clear all loaded documents from memory."""
+        for doc in self.documents:
+            del doc
+        self.documents = []
 
-        Payload indexes have no effect in the local Qdrant. Please use server Qdrant if you need payload indexes.
+    def add_to_docs(self, docs: List[Path | str]):
+        """Add documents to the store if missing, then track them.
+
+        Each path or collection name is materialized into a `StoreDocument`. If it
+        does not exist in Qdrant, it is added, and then referenced in-memory.
 
         Args:
-            collection_name: Name of the collection to create index for.
-
-        """
-        logger.info(f"Creating text index for collection: {collection_name}")
-        self.client.create_payload_index(
-            collection_name=collection_name,
-            field_name="page_content",
-            field_schema=models.TextIndexParams(
-                type=models.TextIndexType.TEXT,
-                tokenizer=models.TokenizerType.PREFIX,
-                lowercase=True,
-                phrase_matching=True,
-                stemmer=models.SnowballParams(type=models.Snowball.SNOWBALL, language=models.SnowballLanguage.ENGLISH),
-            ),
-            wait=True,  # Wait for index creation to complete
-        )
-        logger.debug("Text index creation completed")
-
-    def _add_documents(self, v_store: MyQdrantVectorStore, documents: List[Document]):
-        """Add documents to the vector store.
-
-        Args:
-            v_store: QdrantVectorStore instance to add documents to.
-            documents: List of Document objects to be added to the store.
-
-        """
-        logger.info(f"Adding {len(documents)} documents to vector store")
-        v_store.add_documents(documents)
-        logger.debug("Documents added successfully")
-
-    def _search_documents(self, v_store: MyQdrantVectorStore, query: str, k: int = 4):
-        """Search for documents similar to the query.
-
-        Args:
-            v_store: QdrantVectorStore instance to search in.
-            query: Text query to search for similar documents.
-            k: Number of top results to return.
+            docs: Paths or collection names to add and track.
 
         Returns:
-            List of tuples containing Document objects and their similarity scores.
+            Nothing.
 
         """
-        return v_store.similarity_search_with_score(query, k)
+        for doc in docs:
+            d = StoreDocument(doc, self.qdrant_server)
+            if not any(existing.doc_exist(str(doc)) for existing in self.documents):
+                if not d.doc_exist():
+                    d.add_doc()
+                self.documents.append(d)
 
-    def _rerank(self, query: str, results: List[tuple[Document, float]], k: int):
-        """Rerank search results using cross-encoder model.
+    def del_from_docs(self, docs: List[Path | str]):
+        """Remove matching documents from the in-memory list.
 
         Args:
-            query: Original text query used for searching.
-            results: List of document-score tuples from initial search.
-            k: Number of top results to return after reranking.
+            docs: Paths or collection names to remove from tracking.
 
         Returns:
-            List of reranked document-score tuples, sorted by reranking scores.
+            Nothing.
 
         """
-        result_docs = [r.page_content for r, s in results]
-        scores = list(self.reranker.rerank(query, result_docs))
-        reranked_results = []
-        for doc, score in zip(results, scores):
-            reranked_results.append((doc[0], score))
+        for doc in docs:
+            for stored in list(self.documents):
+                if stored.doc_exist(str(doc)):
+                    self.documents.remove(stored)
+                    del stored
 
-        reranked_results.sort(key=lambda x: x[1], reverse=True)
-        return reranked_results[0:k]
+    def import_docs(self, pattern: Optional[str] = None) -> List[str]:
+        """Import collections from Qdrant, optionally filtered by pattern.
 
-    def get_indexed_documents(self, pattern: Optional[str] = None) -> List[str]:
-        """Get list of documents matching the pattern.
+        Loads collection names from the connected Qdrant instance. When a pattern
+        is provided, only names matching the regular expression are imported. The
+        corresponding `StoreDocument` objects are appended to the in-memory list.
 
         Args:
-            pattern: Regular expression pattern to match collection names.
+            pattern: Optional regular expression to filter collection names.
 
         Returns:
-            List of collection names.
+            The list of imported collection names.
 
         """
         logger.info(f"Getting documents matching pattern: {pattern}")
         ret = []
         collections = self.client.get_collections()
         if not pattern:
-            return [collection.name for collection in collections.collections]
+            ret = [collection.name for collection in collections.collections]
         else:
             for collection in collections.collections:
                 if re.match(pattern, collection.name):
                     ret.append(collection.name)
-            return ret
+        for r in ret:
+            self.documents.append(StoreDocument(r, self.qdrant_server))
+        return ret
 
-    def search_semantic(self, source: str | Path, query: str, k: int = 4):
-        """Search for relevant content using vector similarity.
+    def search_docs(self, query: str, k: int = 4) -> List[Dict[str, Any]]:
+        """Search across loaded documents and rerank results.
 
-        Supports searching in single documents or across multiple collections matching a regex pattern.
-        When searching multiple collections, results are collected from all matching collections
-        before reranking.
-
-        Args:
-            source: Path to the document file to search in, or a regex pattern to match
-                     multiple collection names when searching across documents.
-            query: Text query to search for relevant content.
-            k: Number of top results to return.
-
-        Returns:
-            List of dictionaries containing content, metadata, and relevance scores
-            for the top-k most relevant document sections.
-
-        """
-        logger.info(f"Starting semantic search for query: '{query}' with source: {source}")
-
-        # Determine if source is a file path or regex pattern
-        if isinstance(source, Path) or (isinstance(source, str) and Path(source).exists()):
-            # Single file search
-            return self._search_single_file(Path(source), query, k)
-        else:
-            # Multi-file search with regex pattern
-            return self._search_multiple_files(str(source), query, k)
-
-    def _search_single_file(self, doc_path: Path, query: str, k: int = 4):
-        """Search for relevant content in a single document file.
+        Executes retrieval against each loaded `StoreDocument`, converts results
+        for reranking, and returns the top results.
 
         Args:
-            doc_path: Path to the document file to search in.
-            query: Text query to search for relevant content.
-            k: Number of top results to return.
+            query: Natural-language query to search for.
+            k: Number of results to return after reranking.
 
         Returns:
-            List of dictionaries containing content, metadata, and relevance scores.
+            A list of dictionaries with ``content``, ``metadata``, and ``score``.
 
         """
-        logger.info(f"Starting single file semantic search for query: '{query}' in file: {doc_path}")
-        try:
-            v_store, exists = self._init_colection(doc_path.name)
-            if not exists:
-                logger.info(f"Document not indexed, processing: {doc_path}")
-                splitter = get_splitter(str(doc_path))
-                documents = splitter.split(str(doc_path))
-                self._add_documents(v_store, documents)
-                self._create_index(doc_path.name)
-            else:
-                logger.debug(f"Using existing index for: {doc_path}")
-
-            search_k = k * 2 if k >= 5 else 10
-            logger.debug(f"Performing initial search with k={search_k}")
-            results = self._search_documents(v_store, query, search_k)
-            logger.debug(f"Initial search returned {len(results)} results")
-
-            logger.debug(f"Reranking results to top {k}")
-            reranked_results = self._rerank(query, results, k)
-            logger.info(f"Single file semantic search completed, returning {len(reranked_results)} results")
-
-            return [
-                {
-                    "content": doc.page_content,
-                    "metadata": doc.metadata,
-                    "score": score,
-                }
-                for doc, score in reranked_results
-            ]
-        except Exception as e:
-            logger.error(f"Single file semantic search failed for query '{query}' in file {doc_path}: {e}")
-            raise
-
-    def _search_multiple_files(self, pattern: str, query: str, k: int = 4):
-        """Search for relevant content across multiple collections matching a regex pattern.
-
-        Args:
-            pattern: Regex pattern to match collection names.
-            query: Text query to search for relevant content.
-            k: Number of top results to return.
-
-        Returns:
-            List of dictionaries containing content, metadata, and relevance scores.
-
-        """
-        logger.info(f"Starting multi-collection semantic search for query: '{query}' with pattern: {pattern}")
-
-        # Get all collections matching the pattern
-        collection_names = self.get_indexed_documents(pattern)
-        if not collection_names:
-            logger.warning(f"No collections found matching pattern: {pattern}")
+        if not self.documents:
+            logger.error("No documents in the store")
             return []
-
-        logger.info(f"Found {len(collection_names)} collections matching pattern: {collection_names}")
-
-        # Collect results from all matching collections
-        all_results = []
-        for collection_name in collection_names:
-            try:
-                logger.debug(f"Searching in collection: {collection_name}")
-                v_store, _ = self._init_colection(collection_name)
-
-                # Use a higher k per collection since we'll rerank all together later
-                search_k = (k * 3) // len(collection_names) + 2  # Distribute k across collections
-                results = self._search_documents(v_store, query, search_k)
-                all_results.extend(results)
-                logger.debug(f"Collection {collection_name} returned {len(results)} results")
-            except Exception as e:
-                logger.error(f"Failed to search collection {collection_name}: {e}")
-                continue
-
-        logger.debug(f"Total results collected from all collections: {len(all_results)}")
-
-        if not all_results:
-            logger.warning("No results found in any matching collections")
-            return []
-
-        # Rerank all results together
-        logger.debug(f"Reranking {len(all_results)} total results to top {k}")
-        reranked_results = self._rerank(query, all_results, k)
-        logger.info(f"Multi-collection semantic search completed, returning {len(reranked_results)} results")
-
-        return [
-            {
-                "content": doc.page_content,
-                "metadata": doc.metadata,
-                "score": score,
-            }
-            for doc, score in reranked_results
-        ]
-
-    def search_by_fields(self, doc_path: Path, query: str, k: int = 4):
-        """Search documents using keyword-based filtering.
-
-        Args:
-            doc_path: Path to the document file to search in.
-            query: Filter query string for keyword-based search on page_content. Only page_content can be used.
-                - Text search: page_content like 'search text' (for TEXT indexed fields)
-                - Logical: and, or, not
-                - Grouping: parentheses ()
-                - e.g. page_content like 'Langchain' and (page_content like 'Qdrant' or page_content like 'fastembed')
-            k: Number of top results to return.
-
-        Returns:
-            List of dictionaries containing content, metadata, and relevance scores
-            for matching document sections.
-
-        """
-        logger.info(f"Starting field-based search for query: '{query}' in file: {doc_path}")
-        try:
-            v_store, exists = self._init_colection(doc_path.name)
-            if not exists:
-                logger.info(f"Document not indexed, processing: {doc_path}")
-                splitter = get_splitter(str(doc_path))
-                documents = splitter.split(str(doc_path))
-                self._add_documents(v_store, documents)
-                self._create_index(doc_path.name)
-            else:
-                logger.debug(f"Using existing index for: {doc_path}")
-
-            logger.debug(f"Performing field-based search with k={k}")
-            results = v_store.search_by_fields(query, k)
-            logger.info(f"Field-based search completed, returning {len(results)} results")
-
-            return [
-                {
-                    "content": doc.page_content,
-                    "metadata": doc.metadata,
-                    "score": score,
-                }
-                for doc, score in results
-            ]
-        except Exception as e:
-            logger.error(f"Field-based search failed for query '{query}' in file {doc_path}: {e}")
-            raise
-
-
-if __name__ == "__main__":
-    store = QdrantStore()
-    pprint.pprint(store.get_indexed_documents())
-    # results = store.search_semantic(
-    #     Path("/home/totyz/Documents/Sidewalk/Amazon_Sidewalk_Test_Specification-1.0-rev-A.4.pdf"),
-    #     "BLE/EP/CONN/DUP/BV/01",
-    #     2,
-    # )
-    # pprint.pprint(results)
+        results = []
+        for doc in self.documents:
+            results.extend(doc.search_doc(query, k=k * 2, rerank_results=False))
+        converted_results = [(Document(page_content=r["content"], metadata=r["metadata"]), r["score"]) for r in results]
+        reranked = rerank(query, converted_results, k=k)
+        return [{"content": doc.page_content, "metadata": doc.metadata, "score": score} for doc, score in reranked]

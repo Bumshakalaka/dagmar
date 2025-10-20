@@ -7,7 +7,6 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 ## Features
 
 - **Hybrid Retrieval**: Combines dense and sparse vector embeddings for superior search accuracy
-- **Keyword-Based Filtering**: Support for structured field queries with logical operators
 - **Reranking**: Uses cross-encoder models to rerank results for better relevance
 - **Multi-Format Support**: Handles PDF, Markdown, Text, and CSV files automatically
 - **Multi-Document Search**: Search across multiple documents using regex patterns
@@ -57,7 +56,7 @@ uv sync
 
 ### Basic Search
 
-Search for content in a document using natural language queries:
+Search for content in documents using natural language queries:
 
 ```bash
 dagmar --source document.pdf "What is the main topic discussed?"
@@ -69,11 +68,11 @@ dagmar --source document.pdf "What is the main topic discussed?"
 # Specify number of results (default: 4)
 dagmar --results 10 --source report.md "Summarize the key findings"
 
-# Keyword-based field filtering (structured queries)
-dagmar --fields --source document.pdf "page_content like 'important keyword'"
+# Search across multiple files
+dagmar --source report.md --source data.csv "implementation details"
 
 # Search across multiple files using regex pattern
-dagmar --source "*.manual.*\.pdf" "implementation details"
+dagmar --source "*.manual.*\.pdf" --source "notes*.md" "implementation details"
 
 # Short form options
 dagmar -k 5 -s data.csv "Show me entries with status=active"
@@ -81,9 +80,8 @@ dagmar -k 5 -s data.csv "Show me entries with status=active"
 
 ### Command Line Options
 
-- `-f, --source`: Path to the document file to search in, or a regex pattern to match multiple file names when searching across documents (required)
+- `-f, --source`: Path to the document file to search in, or a regex pattern to match multiple file names when searching across documents (required). Can be provided multiple times to search across several sources.
 - `-k, --results`: Number of search results to return (default: 4)
-- `--fields`: Use keyword-based field search instead of semantic search (default: false)
 - `query`: Search query (positional argument)
 
 ### Examples
@@ -98,13 +96,11 @@ dagmar --source notes.md "implementation details"
 # Search in a CSV file
 dagmar --source data.csv "filter by category"
 
-# Search across multiple files using regex pattern
-dagmar --source "*.manual.*\.pdf" "implementation details"
+# Search across multiple specific files
+dagmar --source manual --source ~\docs\notes.md "implementation details" -k 2
 
-# Keyword-based filtering examples
-dagmar --fields --source document.pdf "page_content like 'machine learning'"
-dagmar --fields --source report.md "page_content like 'error' and page_content like 'handling'"
-dagmar --fields --source spec.pdf "(page_content like 'API' or page_content like 'interface') and not page_content like 'deprecated'"
+# Search across multiple files using regex patterns
+dagmar --source "*.manual.*\.pdf" --source "notes*.md" "implementation details"
 ```
 
 ## MCP Server
@@ -134,8 +130,9 @@ The MCP server exposes a `dagmar_doc_search` tool that enables semantic document
 #### Tool Parameters
 
 - `query`: Natural language search query
-- `source`: Path to the document file to search in, or a regex pattern to match multiple file names when searching across documents
+- `sources`: List of paths to the local document files to search in, or a regex pattern to match multiple file names when searching across documents
 - `limit`: Number of top results to return (default: 4)
+- `db_server`: Optional Qdrant server location. Select :memory: for in-memory storage for temporary use, otherwise uses persistent storage (None) as defined in QDRANT_URL environment variable.
 
 ## Technology Stack
 
@@ -181,6 +178,7 @@ dagmar/
 │   ├── cli.py                 # Command-line interface
 │   ├── server.py              # MCP server implementation
 │   ├── store.py               # Vector store and search logic
+│   ├── store_document.py      # Document storage and processing utilities
 │   ├── parse_filter_string.py # Filter query parsing utilities
 │   ├── splitters/             # Document processing utilities
 │   │   ├── __init__.py
@@ -227,67 +225,30 @@ Each document gets its own collection named after the file.
 ### Programmatic Usage
 
 ```python
-from dagmar.store import QdrantStore
+from dagmar.store import Store
 from pathlib import Path
 
 # Initialize the store
-store = QdrantStore()
+store = Store()
 
-# Search in a document
-results = store.search_semantic(
-    Path("document.pdf"),
+# Add documents (for single or multiple files)
+store.add_to_docs([Path("document1.pdf"), Path("document2.md")])
+
+# Or import from patterns
+store.import_docs(".+\.pdf")
+
+# Search in the documents
+results = store.search_docs(
     "your search query",
     k=5
 )
 
 # Process results
 for result in results:
+    print(f"Score: {result['score']}")
     print(f"Content: {result['content']}")
     print(f"Metadata: {result['metadata']}")
-    print(f"Score: {result['score']}")
 
-# Keyword-based field filtering
-results = store.search_by_fields(
-    Path("document.pdf"),
-    "page_content like 'important keyword'",
-    k=5
-)
-
-# Advanced filtering with logical operators
-results = store.search_by_fields(
-    Path("report.md"),
-    "page_content like 'error' and page_content like 'handling'",
-    k=10
-
-)
-```
-
-## Filter Query Syntax
-
-When using keyword-based field filtering (`--fields` option), you can use structured queries with the following syntax:
-
-### Supported Operators
-
-- **Text Search**: `page_content like 'search text'` - Search for text within document content
-- **Logical AND**: `condition1 and condition2` - Both conditions must be true
-- **Logical OR**: `condition1 or condition2` - Either condition must be true
-- **Logical NOT**: `not condition` - Negate a condition
-- **Grouping**: `(condition1 or condition2) and condition3` - Use parentheses for precedence
-
-### Examples
-
-```bash
-# Simple text search
-"page_content like 'machine learning'"
-
-# Multiple keywords with AND
-"page_content like 'error' and page_content like 'handling'"
-
-# Multiple keywords with OR
-"page_content like 'API' or page_content like 'interface'"
-
-# Complex query with grouping
-"(page_content like 'bug' or page_content like 'issue') and not page_content like 'resolved'"
 ```
 
 ## Acknowledgments

@@ -5,11 +5,12 @@ import logging
 import signal
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 from mcp.server.fastmcp import Context, FastMCP
 
 from dagmar.logging_config import setup_logging
-from dagmar.store import QdrantStore
+from dagmar.store import Store
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,9 @@ mcp = FastMCP("Dagmar RAG")
 def dagmar_doc_search(
     ctx: Context,  # noqa: ARG001,ARG002
     query: str,
-    source: str | Path,
+    sources: List[str | Path],
     limit: int = 4,
+    db_server: Optional[str] = None,
 ):
     """Search for relevant content in a document using vector similarity and hybrid retrieval.
 
@@ -35,34 +37,28 @@ def dagmar_doc_search(
         ctx: Context object.
         query: Text query to search for relevant content.
                It should be reformulated to get the most relevant information from Vector Database.
-        source: Path to the local document file to search in, or a regex pattern to match
+        sources: List of paths to the local document files to search in, or a regex pattern to match
                  multiple file names when searching across documents.
         limit: Number of top results to return.
+        db_server: Optional Qdrant server location. Select :memory: for in-memory storage for temporary use,
+            otherwise uses persistent storage (None) as defined in QDRANT_URL environment variable.
 
     Returns:
         List of dictionaries containing content, metadata, and relevance scores
         for the top-k most relevant document sections.
 
     """
-    logger.info(f"Received search request: query='{query}', file='{source}', limit={limit}")
+    logger.info(
+        f"Received search request: query='{query}', sources='{sources}', limit={limit}, db_server='{db_server}'"
+    )
     try:
-        # Check if source is a file path or regex pattern
-        source_obj = Path(source)
-        if source_obj.exists() and source_obj.is_file():
-            # It's a valid file path, validate it
-            pass  # File exists and is valid
-        elif source_obj.exists():
-            # Path exists but is not a file
-            logger.error(f"Path exists but is not a file: {source}")
-            raise NotADirectoryError(f"Path {source} exists but is not a file")
-        else:
-            # Path doesn't exist - could be a regex pattern, let search_semantic handle it
-            logger.debug(f"Path {source} does not exist - treating as regex pattern")
-
-        logger.debug("Initializing QdrantStore")
-        store = QdrantStore()
-        logger.debug(f"Performing semantic search with limit={limit}")
-        results = store.search_semantic(source, query, limit)
+        store = Store(db_server)
+        for source in sources:
+            if Path(source).exists():
+                store.add_to_docs([source])
+            else:
+                store.import_docs(str(source))
+        results = store.search_docs(query, limit)
         logger.info(f"Search completed, returning {len(results)} results")
         return results
     except Exception as e:

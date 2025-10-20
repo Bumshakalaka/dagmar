@@ -14,32 +14,23 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 def setup_logging(log_level: LogLevel = "WARNING") -> None:
     """Configure logging for the application.
 
-    Sets up a root logger with stdout handler and custom formatter.
-    Ensures no duplicate handlers are created.
-
-    Args:
-        log_level: Logging level to set (default: WARNING)
-
+    Sets up a 'dagmar' logger with the desired log level, and sends
+    all other loggers' levels to WARNING. Ensures no duplicate handlers.
     """
-    # Get the root logger
-    logger = logging.getLogger()
+    # Set up 'dagmar' logger (and submodules)
+    dagmar_logger = logging.getLogger("dagmar")
+    dagmar_logger.handlers.clear()
+    dagmar_logger.setLevel(getattr(logging, log_level))
 
-    # Clear any existing handlers to avoid duplicates
-    logger.handlers.clear()
-
-    # Set the log level
-    logger.setLevel(getattr(logging, log_level))
-
-    # Create stdout handler
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, log_level))
-
-    # Create formatter
     formatter = logging.Formatter("%(asctime)s [%(levelname)8s] [%(name)10s]: %(message)s")
     handler.setFormatter(formatter)
+    dagmar_logger.addHandler(handler)
+    dagmar_logger.propagate = False
 
-    # Add handler to logger
-    logger.addHandler(handler)
-
-    # Prevent propagation to avoid duplicate logs
-    logger.propagate = False
+    # Set all root and other loggers (except dagmar) to WARNING level
+    logging.getLogger().setLevel(logging.WARNING)
+    for name in logging.root.manager.loggerDict:
+        if not name.startswith("dagmar"):
+            logging.getLogger(name).setLevel(logging.WARNING)

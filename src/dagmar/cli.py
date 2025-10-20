@@ -8,7 +8,7 @@ import argparse
 from pathlib import Path
 
 from dagmar.logging_config import setup_logging
-from dagmar.store import QdrantStore
+from dagmar.store import Store
 
 
 def main():
@@ -38,15 +38,10 @@ Examples:
         "-s",
         type=str,
         required=True,
-        help="""Path to the document file to search in, 
-        or a regex pattern to match multiple file names when searching across documents.""",
-    )
-
-    parser.add_argument(
-        "--fields",
-        action="store_true",
-        default=False,
-        help="Use keyword-based field search instead of semantic search (default: false)",
+        action="append",
+        help="""Path to the document file to search in,
+        or a regex pattern to match multiple file names when searching across documents.
+        Can be provided multiple times to search across several sources.""",
     )
 
     parser.add_argument(
@@ -67,27 +62,28 @@ Examples:
     # Initialize logging
     setup_logging(args.log_level)
 
-    # Validate file exists (only for file-based searches, not regex patterns)
-    source_obj = Path(args.source)
-    if source_obj.exists():
-        # It's a file path - validate it
-        if not source_obj.is_file():
-            parser.error(f"'{args.source}' exists but is not a file")
-        source = source_obj
-    else:
-        # Could be a regex pattern - pass as string
-        source = args.source
+    # Validate that all provided sources exist as files if they're paths.
+    # If not, treat as regex patterns (leave as strings).
+    sources = []
+    for src in args.source:
+        src_path = Path(src)
+        if src_path.exists():
+            if not src_path.is_file():
+                parser.error(f"'{src}' exists but is not a file")
+            sources.append(str(src_path))
+        else:
+            # Not a path: treat as pattern/string
+            sources.append(src)
 
     # Initialize store and perform search
     try:
-        store = QdrantStore()
-        if args.fields:
-            # search_by_fields still expects a Path object for now
-            if not isinstance(source, Path):
-                parser.error("Field-based search requires a valid file path, not a regex pattern")
-            results = store.search_by_fields(source, args.query, args.results)
-        else:
-            results = store.search_semantic(source, args.query, args.results)
+        store = Store()
+        for source in sources:
+            if Path(source).exists():
+                store.add_to_docs([source])
+            else:
+                store.import_docs(source)
+        results = store.search_docs(args.query, args.results)
 
         if not results:
             print("No results found.")
@@ -98,6 +94,7 @@ Examples:
         print("=" * 60)
 
         for i, result in enumerate(results, 1):
+            print(result["score"])
             print(result["content"])
             if result["metadata"]:
                 print(f"Metadata: {result['metadata']}")
