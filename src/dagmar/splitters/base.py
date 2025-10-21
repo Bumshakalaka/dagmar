@@ -59,11 +59,9 @@ class BaseSplitter:
         """Generate cache key from filename and modification time.
 
         :param file_path: Path to the file.
-        :return: Cache key in format {filename_without_ext}_{timestamp}.
+        :return: Cache key in format {filename_without_ext}.
         """
-        file_path_obj = Path(file_path)
-        mtime = int(file_path_obj.stat().st_mtime)
-        return f"{file_path_obj.stem}_{mtime}"
+        return Path(file_path).stem
 
     @classmethod
     def _get_cache_path(cls, file_path: str) -> Path:

@@ -104,7 +104,7 @@ class StoreDocument:
         if not qdrant_server:
             qdrant_server = QDRANT_URL
 
-        logger.info(f"Initializing QdrantStore with location: {qdrant_server}")
+        logger.info(f"Initializing document store for {doc_file} with location: {qdrant_server}")
         if qdrant_server == ":memory:":
             self.client = QdrantClient(":memory:")
         elif qdrant_server.startswith("http"):
@@ -122,7 +122,7 @@ class StoreDocument:
             if not Path(qdrant_server).is_dir():
                 raise NotADirectoryError(f"Path {qdrant_server} is not a directory")
             self.client = QdrantClient(path=qdrant_server)
-        logger.info("QdrantStore initialization completed")
+        logger.info("Document store initialization completed")
         if (isinstance(doc_file, Path) and doc_file.exists()) or (
             isinstance(doc_file, str) and Path(doc_file).exists()
         ):
@@ -148,33 +148,9 @@ class StoreDocument:
         Logs the deletion and removes references to vector store and client
         to free up memory resources.
         """
-        logger.info(f"{self} deleted")
+        logger.debug(f"{self} deleted")
         del self.vector_store
         del self.client
-
-    def __enter__(self):
-        """Enter the runtime context related to this object.
-
-        Returns:
-            The StoreDocument instance itself.
-
-        """
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit the runtime context related to this object.
-
-        Args:
-            exc_type: Type of the exception.
-            exc_val: Value of the exception.
-            exc_tb: Traceback of the exception.
-
-        Returns:
-            False to allow exception propagation.
-
-        """
-        logger.info(f"{self} context exited")
-        return False
 
     def _init_collection(self):
         """Initialize or retrieve existing Qdrant collection.

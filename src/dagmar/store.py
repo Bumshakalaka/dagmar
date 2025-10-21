@@ -48,7 +48,7 @@ class Store:
         if not qdrant_server:
             qdrant_server = QDRANT_URL
 
-        logger.info(f"Initializing QdrantStore with location: {qdrant_server}")
+        logger.info(f"Initializing store with location: {qdrant_server}")
         if qdrant_server == ":memory:":
             self.client = QdrantClient(":memory:")
         elif qdrant_server.startswith("http"):
@@ -67,7 +67,6 @@ class Store:
                 raise NotADirectoryError(f"Path {qdrant_server} is not a directory")
             self.client = QdrantClient(path=qdrant_server)
         self.qdrant_server = qdrant_server
-        logger.info("QdrantStore initialization completed")
         self.documents: List[StoreDocument] = []
 
     @property
