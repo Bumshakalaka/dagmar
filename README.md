@@ -8,9 +8,9 @@ Dagmar is a powerful document search and retrieval system that enables semantic 
 
 - **Hybrid Retrieval**: Combines dense and sparse vector embeddings for superior search accuracy
 - **Reranking**: Uses cross-encoder models to rerank results for better relevance
-- **Multi-Format Support**: Handles PDF, Markdown, Text, and CSV files automatically
+- **Multi-Format Support**: Handles PDF, Markdown, Text, PPTX and CSV files automatically
 - **Multi-Document Search**: Search across multiple documents using regex patterns
-- **LLM-Based PDF Processing**: Advanced PDF extraction using Azure OpenAI vision models for structured content
+- **LLM-Based PDF Processing**: Advanced PDF and PPTX extraction using Azure OpenAI vision models for structured content
 - **Local Vector Database**: Stores embeddings locally using Qdrant for privacy and performance
 - **Automatic Indexing**: Documents are processed and indexed on-demand
 - **CLI Interface**: Simple command-line interface for easy integration
@@ -187,6 +187,7 @@ dagmar/
 │   │   ├── md.py              # Markdown file processing
 │   │   ├── pdf.py             # PDF file processing
 │   │   ├── pdf_llm.py         # LLM-based PDF processing
+│   │   ├── pptx.py            # PPTX file processing
 │   │   ├── txt.py             # Text file processing
 │   │   ├── llm_base.py        # Base LLM splitter utilities
 │   │   └── image_to_md_prompt.md # LLM prompt for image processing

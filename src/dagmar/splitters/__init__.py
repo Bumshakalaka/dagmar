@@ -16,6 +16,7 @@ from dagmar.splitters.csv import CsvSplitter
 from dagmar.splitters.md import MdSplitter
 from dagmar.splitters.pdf import PdfSplitter
 from dagmar.splitters.pdf_llm import PdfLlmSplitter
+from dagmar.splitters.pptx import PptxLlmSplitter
 from dagmar.splitters.txt import TxtSplitter
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ __all__ = [
     "BaseSplitter",
     "PdfSplitter",
     "PdfLlmSplitter",
+    "PptxLlmSplitter",
     "TxtSplitter",
     "MdSplitter",
     "CsvSplitter",
