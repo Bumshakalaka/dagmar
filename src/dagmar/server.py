@@ -26,7 +26,9 @@ def dagmar_doc_search(
     limit: int = 4,
     db_server: Optional[str] = None,
 ):
-    """Search for relevant content in a document using vector similarity and hybrid retrieval.
+    """Search for relevant content in single or multiple documents using vector similarity and hybrid retrieval.
+
+    The tool support file formats: PDF, Markdown, Text, PPTX and CSV.
 
     This tool searches documents using:
     - Hybrid search: Combines vector similarity (dense + sparse) with filtering
