@@ -7,6 +7,7 @@ using vision models.
 
 import logging
 import os
+import re
 from abc import abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from typing import List
 from dotenv import find_dotenv, load_dotenv
 from langchain.chat_models import init_chat_model
 from langchain_core.documents import Document
+from langchain_text_splitters import MarkdownHeaderTextSplitter
 from PIL import Image
 
 from dagmar.md_fixer import MarkdownFixer
@@ -119,15 +121,33 @@ class _LlmBaseSplitter(BaseSplitter):
             fixer = MarkdownFixer()
             combined_markdown = fixer.process_content(combined_markdown, Path(file_path).stem)
 
-            # Split the combined markdown
-            from langchain_text_splitters import MarkdownHeaderTextSplitter
-
+            # Keep chunking by H2 to preserve semantic sections
             text_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=[("##", "H2")], strip_headers=False)
             documents = text_splitter.split_text(combined_markdown)
+
+            # Extract page markers per chunk, add metadata, and strip markers from content
+            prev_page_ids = set()
+            for doc in documents:
+                doc.metadata["source"] = file_path
+
+                page_ids = set()
+                for m in re.findall(r"<!--\s*PAGE:(\d+)\s*-->", doc.page_content):
+                    page_ids.add(int(m))
+
+                if page_ids:
+                    pages_sorted = sorted(page_ids)
+                    prev_page_ids = pages_sorted
+                    doc.metadata["page_nums"] = pages_sorted
+                elif prev_page_ids:
+                    doc.metadata["page_nums"] = prev_page_ids
+
+                # Remove markers so they don't affect embeddings
+                doc.page_content = re.sub(r"<!--\s*PAGE:\d+\s*-->\s*", "", doc.page_content)
+
             logger.debug(f"LLM-processed file split into {len(documents)} chunks")
             return documents
         except Exception as e:
-            logger.error(f"Failed to process file with LLM {file_path}: {e}")
+            logger.error(f"Failed to process file {file_path}: {e}")
             raise
 
     @classmethod
@@ -167,15 +187,14 @@ class _LlmBaseSplitter(BaseSplitter):
             # Invoke the model
             response = chat_model.invoke(messages)
 
-            # Extract content
             markdown_content = response.content
             logger.debug(f"Successfully processed page {page_num}")
 
-            return "\n" + markdown_content + "\n"
+            return f"{markdown_content}\n<!-- PAGE:{page_num} -->\n"
 
         except Exception as e:
             logger.error(f"Failed to process page {page_num}: {e}")
-            return f"\n\n## Page {page_num}\n\n[ERROR: Page {page_num} processing failed - {str(e)}]\n"
+            return f"[ERROR: Page {page_num} processing failed - {str(e)}]\n<!-- PAGE:{page_num} -->\n"
 
     @classmethod
     def _process_all_pages(cls, images: List[Image.Image]) -> str:
@@ -224,7 +243,7 @@ class _LlmBaseSplitter(BaseSplitter):
                     results[page_idx] = result
                 except Exception as e:
                     logger.error(f"Page {page_idx + 1} processing failed: {e}")
-                    error_msg = f"\n\n## Page {page_idx + 1}\n\n[ERROR: Page {page_idx + 1} failed - {str(e)}]\n"
+                    error_msg = f"[ERROR: Page {page_idx + 1} failed - {str(e)}]\n<!-- PAGE:{page_idx + 1} -->\n"
                     results[page_idx] = error_msg
 
         # Combine results in original page order
