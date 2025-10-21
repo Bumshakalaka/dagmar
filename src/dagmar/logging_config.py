@@ -1,6 +1,6 @@
 """Logging configuration for Dagmar.
 
-This module provides centralized logging setup with stdout-only output
+This module provides centralized logging setup with stderr output
 and configurable log levels.
 """
 
@@ -11,18 +11,23 @@ from typing import Literal
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
-def setup_logging(log_level: LogLevel = "WARNING") -> None:
+def setup_logging(log_level: LogLevel = "WARNING", stderr: bool = False) -> None:
     """Configure logging for the application.
 
     Sets up a 'dagmar' logger with the desired log level, and sends
     all other loggers' levels to WARNING. Ensures no duplicate handlers.
+
+    Args:
+        log_level: Log level to set for the 'dagmar' logger.
+        stderr: Whether to write logs to stderr. If False, writes to stdout.
+
     """
     # Set up 'dagmar' logger (and submodules)
     dagmar_logger = logging.getLogger("dagmar")
     dagmar_logger.handlers.clear()
     dagmar_logger.setLevel(getattr(logging, log_level))
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(sys.stderr if stderr else sys.stdout)
     handler.setLevel(getattr(logging, log_level))
     formatter = logging.Formatter("%(asctime)s [%(levelname)8s] [%(name)10s]: %(message)s")
     handler.setFormatter(formatter)

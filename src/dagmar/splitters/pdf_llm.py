@@ -38,7 +38,6 @@ class PdfLlmSplitter(_LlmBaseSplitter):
         :param file_path: Path to the PDF file.
         :return: List of PIL Image objects, one per page.
         """
-        logger.debug(f"Converting PDF to images: {file_path}")
         images = []
 
         # Open PDF

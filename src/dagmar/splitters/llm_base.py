@@ -105,21 +105,20 @@ class _LlmBaseSplitter(BaseSplitter):
             # If no cache hit, process with LLM
             if combined_markdown is None:
                 # Convert file to images
-                logger.debug("Converting file to images")
                 images = cls._convert_to_images(file_path)
-                logger.debug(f"Converted to {len(images)} images")
+                logger.info(f"Converted to {len(images)} images")
 
                 # Process all images with LLM
-                logger.debug("Processing images with LLM vision model")
                 combined_markdown = cls._process_all_pages(images)
+                logger.info(f"Processed {len(images)} images with LLM")
 
                 # Save to cache if caching is enabled
                 if cls.use_cache:
                     cls._save_to_cache(file_path, combined_markdown)
 
-            logger.debug("Fixing markdown")
             fixer = MarkdownFixer()
             combined_markdown = fixer.process_content(combined_markdown, Path(file_path).stem)
+            logger.info(f"Fixed markdown for {file_path}")
 
             # Keep chunking by H2 to preserve semantic sections
             text_splitter = MarkdownHeaderTextSplitter(headers_to_split_on=[("##", "H2")], strip_headers=False)
@@ -144,7 +143,7 @@ class _LlmBaseSplitter(BaseSplitter):
                 # Remove markers so they don't affect embeddings
                 doc.page_content = re.sub(r"<!--\s*PAGE:\d+\s*-->\s*", "", doc.page_content)
 
-            logger.debug(f"LLM-processed file split into {len(documents)} chunks")
+            logger.info(f"LLM-processed file {file_path} split into {len(documents)} chunks")
             return documents
         except Exception as e:
             logger.error(f"Failed to process file {file_path}: {e}")
@@ -159,7 +158,6 @@ class _LlmBaseSplitter(BaseSplitter):
         :param chat_model: Initialized chat model with vision capabilities.
         :return: Extracted markdown content for the page.
         """
-        logger.debug(f"Processing page {page_num} with LLM")
         try:
             # Convert image to base64
             import base64
@@ -188,7 +186,7 @@ class _LlmBaseSplitter(BaseSplitter):
             response = chat_model.invoke(messages)
 
             markdown_content = response.content
-            logger.debug(f"Successfully processed page {page_num}")
+            logger.info(f"Successfully processed page {page_num}")
 
             return f"{markdown_content}\n<!-- PAGE:{page_num} -->\n"
 

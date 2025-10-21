@@ -62,6 +62,7 @@ def dagmar_doc_search(
                 store.import_docs(str(source))
         results = store.search_docs(query, limit)
         logger.info(f"Search completed, returning {len(results)} results")
+
         return results
     except Exception as e:
         logger.error(f"Search request failed: {e}")
@@ -86,7 +87,7 @@ def main():
     args = parser.parse_args()
 
     # Initialize logging
-    setup_logging(args.log_level)
+    setup_logging(args.log_level, stderr=True)
 
     logger.info("Starting Dagmar RAG MCP Server")
     signal.signal(signal.SIGINT, sigint_handler)

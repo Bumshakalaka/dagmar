@@ -233,7 +233,6 @@ for result in results:
 
 ## TODO:
 
-- [ ] Add mcp logs from server to client
 - [ ] Add mcp progress/notifications
 - [ ] Add support for markitdown package for markdown processing
 - [ ] Add store method to get complete page of document (filter by page field and group and return)

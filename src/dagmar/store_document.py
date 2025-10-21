@@ -19,7 +19,6 @@ from langchain_core.documents import Document
 from langchain_qdrant import FastEmbedSparse, RetrievalMode
 from qdrant_client import QdrantClient, models
 
-from dagmar.logging_config import setup_logging
 from dagmar.my_qdrant_vector_store import MyQdrantVectorStore
 from dagmar.splitters import get_splitter
 
@@ -324,11 +323,3 @@ class StoreDocument:
         else:
             self._init_collection()
             return self._search_collection(query, k, rerank_results)
-
-
-if __name__ == "__main__":
-    setup_logging("INFO")
-    q = StoreDocument("/home/totyz/Documents/karta_zapisu_Nataniel_zlobek.pdf")
-    print(q.doc_exist())
-    print(q.add_doc())
-    print(q.search_doc("karta", k=1))
