@@ -99,7 +99,7 @@ class Store:
 
         """
         for doc in docs:
-            d = StoreDocument(doc, self.qdrant_server)
+            d = StoreDocument(doc, self.client)
             if not any(existing.doc_exist(str(doc)) for existing in self.documents):
                 if not d.doc_exist():
                     d.add_doc()
@@ -145,7 +145,7 @@ class Store:
                 if re.match(pattern, collection.name):
                     ret.append(collection.name)
         for r in ret:
-            self.documents.append(StoreDocument(r, self.qdrant_server))
+            self.documents.append(StoreDocument(r, self.client))
         return ret
 
     def search_docs(self, query: str, k: int = 4) -> List[Dict[str, Any]]:

@@ -8,7 +8,6 @@ with Qdrant for efficient similarity search operations.
 
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -76,52 +75,18 @@ class StoreDocument:
     processing, and similarity search operations with both dense and sparse vectors.
     """
 
-    def __init__(self, doc_file: Path | str, qdrant_server: Optional[str] = None) -> None:
-        """Initialize StoreDocument with Qdrant client and document file.
-
-        Sets up the Qdrant client connection and prepares the document for processing.
-        The client can connect to a local Qdrant instance, remote server, or use
-        in-memory storage.
+    def __init__(self, doc_file: Path | str, client: QdrantClient) -> None:
+        """Initialize StoreDocument with a Qdrant client and document file.
 
         Args:
             doc_file: Path to the document file to process, or collection name
                 if the file doesn't exist.
-            qdrant_server: Qdrant server location. If None, uses QDRANT_URL
-                environment variable. Accepts:
-                - ":memory:" for in-memory storage
-                - Local path to Qdrant database directory
-                - HTTP/HTTPS URL to Qdrant server (e.g., "http://localhost:6333")
-
-        Raises:
-            ValueError: If the qdrant_server format is invalid.
-            FileNotFoundError: If the qdrant_server is a path to a directory
-                that does not exist.
-            NotADirectoryError: If the qdrant_server is a path to a file
-                that is not a directory.
+            client: Qdrant client to use. A local (path-based) Qdrant storage can
+                only be opened by a single client, so it must be shared.
 
         """
-        if not qdrant_server:
-            qdrant_server = QDRANT_URL
-
-        logger.info(f"Initializing document store for {doc_file} with location: {qdrant_server}")
-        if qdrant_server == ":memory:":
-            self.client = QdrantClient(":memory:")
-        elif qdrant_server.startswith("http"):
-            # Acceptable formats: http://host[:port]
-            match = re.match(r"(https?)://([^:/]+)(?::(\d+))?", qdrant_server)
-            if not match:
-                raise ValueError(f"Invalid qdrant_server format: {qdrant_server}")
-
-            proto, host, port = match.groups()
-            port = int(port) if port else 6333
-            self.client = QdrantClient(url=f"{proto}://{host}", port=port)
-        else:
-            if not Path(qdrant_server).parent.exists():
-                raise FileNotFoundError(f"Directory {Path(qdrant_server).parent} does not exist")
-            if not Path(qdrant_server).is_dir():
-                raise NotADirectoryError(f"Path {qdrant_server} is not a directory")
-            self.client = QdrantClient(path=qdrant_server)
-        logger.info("Document store initialization completed")
+        logger.info(f"Initializing document store for {doc_file}")
+        self.client = client
         if (isinstance(doc_file, Path) and doc_file.exists()) or (
             isinstance(doc_file, str) and Path(doc_file).exists()
         ):
@@ -139,17 +104,11 @@ class StoreDocument:
             String representation showing document file and collection name.
 
         """
-        return f"StoreDocument(doc_file={self.doc}, collection={self.collection})"
+        return f"StoreDocument(doc_file={getattr(self, 'doc', None)}, collection={getattr(self, 'collection', None)})"
 
     def __del__(self):
-        """Clean up resources when StoreDocument instance is deleted.
-
-        Logs the deletion and removes references to vector store and client
-        to free up memory resources.
-        """
+        """Log deletion of the StoreDocument instance."""
         logger.debug(f"{self} deleted")
-        del self.vector_store
-        del self.client
 
     def _init_collection(self):
         """Initialize or retrieve existing Qdrant collection.
@@ -194,6 +153,9 @@ class StoreDocument:
         Processes the document using the appropriate splitter and adds the resulting
         document chunks to the vector store for indexing.
 
+        If processing fails, the collection is removed so that a partially indexed
+        document is not mistaken for an indexed one on the next run.
+
         Returns:
             True if document was successfully added, False otherwise.
 
@@ -205,9 +167,15 @@ class StoreDocument:
             logger.error("Doc file not defined, cannot add to database")
             return False
         logger.info(f"Document not indexed, processing: {self.doc}")
-        splitter = get_splitter(str(self.doc))
-        documents = splitter.split(str(self.doc))
-        self.vector_store.add_documents(documents)
+        try:
+            splitter = get_splitter(str(self.doc))
+            documents = splitter.split(str(self.doc))
+            self.vector_store.add_documents(documents)
+        except Exception:
+            logger.error(f"Indexing {self.doc} failed, removing collection {self.collection}")
+            self.client.delete_collection(self.collection)
+            self.vector_store = None
+            raise
         return True
 
     def _search_collection(self, query: str, k: int, rerank_results: bool) -> List[Dict]:
@@ -278,7 +246,7 @@ class StoreDocument:
             True if document was successfully added, False if it already exists.
 
         Example:
-            >>> store = StoreDocument("example.pdf")
+            >>> store = StoreDocument("example.pdf", QdrantClient(":memory:"))
             >>> success = store.add_doc()
             >>> print(success)  # True if added, False if exists
 
@@ -307,7 +275,7 @@ class StoreDocument:
             each search result. Returns empty list if collection doesn't exist.
 
         Example:
-            >>> store = StoreDocument("example.pdf")
+            >>> store = StoreDocument("example.pdf", QdrantClient(":memory:"))
             >>> store.add_doc()
             >>> results = store.search("relevant query", k=3)
             >>> print(results[0]["content"])

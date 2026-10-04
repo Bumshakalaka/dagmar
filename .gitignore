@@ -17,3 +17,6 @@ wheels/
 qdrant_db/
 processed_files/
 .env
+
+.specstory/
+.cursorindexingignore
