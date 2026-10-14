@@ -8,6 +8,7 @@ with Qdrant for efficient similarity search operations.
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -75,18 +76,27 @@ class StoreDocument:
     processing, and similarity search operations with both dense and sparse vectors.
     """
 
-    def __init__(self, doc_file: Path | str, client: QdrantClient) -> None:
+    def __init__(
+        self,
+        doc_file: Path | str,
+        qdrant_server: Optional[str] = None,
+        client: Optional[QdrantClient] = None,
+    ) -> None:
         """Initialize StoreDocument with a Qdrant client and document file.
 
         Args:
             doc_file: Path to the document file to process, or collection name
                 if the file doesn't exist.
-            client: Qdrant client to use. A local (path-based) Qdrant storage can
-                only be opened by a single client, so it must be shared.
+            qdrant_server: Qdrant server location. If None, uses ``QDRANT_URL``.
+                Accepts ``":memory:"``, a local database directory, or an HTTP(S)
+                URL.
+            client: Existing Qdrant client to reuse. Required for local path storage
+                when multiple documents are managed in one process.
 
         """
-        logger.info(f"Initializing document store for {doc_file}")
-        self.client = client
+        if not qdrant_server:
+            qdrant_server = QDRANT_URL
+
         if (isinstance(doc_file, Path) and doc_file.exists()) or (
             isinstance(doc_file, str) and Path(doc_file).exists()
         ):
@@ -96,6 +106,31 @@ class StoreDocument:
             self.doc = None
         self.collection = Path(doc_file).name
         self.vector_store: Optional[MyQdrantVectorStore] = None
+
+        logger.info(f"Initializing document store for {doc_file} with location: {qdrant_server}")
+        if client is not None:
+            self.client = client
+            self._owns_client = False
+        elif qdrant_server == ":memory:":
+            self.client = QdrantClient(":memory:")
+            self._owns_client = True
+        elif qdrant_server.startswith("http"):
+            match = re.match(r"(https?)://([^:/]+)(?::(\d+))?", qdrant_server)
+            if not match:
+                raise ValueError(f"Invalid qdrant_server format: {qdrant_server}")
+
+            proto, host, port = match.groups()
+            port = int(port) if port else 6333
+            self.client = QdrantClient(url=f"{proto}://{host}", port=port)
+            self._owns_client = True
+        else:
+            if not Path(qdrant_server).parent.exists():
+                raise FileNotFoundError(f"Directory {Path(qdrant_server).parent} does not exist")
+            if not Path(qdrant_server).is_dir():
+                raise NotADirectoryError(f"Path {qdrant_server} is not a directory")
+            self.client = QdrantClient(path=qdrant_server)
+            self._owns_client = True
+        logger.info("Document store initialization completed")
 
     def __repr__(self) -> str:
         """Return string representation of StoreDocument instance.
@@ -107,8 +142,12 @@ class StoreDocument:
         return f"StoreDocument(doc_file={getattr(self, 'doc', None)}, collection={getattr(self, 'collection', None)})"
 
     def __del__(self):
-        """Log deletion of the StoreDocument instance."""
+        """Clean up resources owned by the StoreDocument instance."""
         logger.debug(f"{self} deleted")
+        if getattr(self, "vector_store", None) is not None:
+            del self.vector_store
+        if getattr(self, "_owns_client", False) and getattr(self, "client", None) is not None:
+            del self.client
 
     def _init_collection(self):
         """Initialize or retrieve existing Qdrant collection.
@@ -246,7 +285,7 @@ class StoreDocument:
             True if document was successfully added, False if it already exists.
 
         Example:
-            >>> store = StoreDocument("example.pdf", QdrantClient(":memory:"))
+            >>> store = StoreDocument("example.pdf", ":memory:")
             >>> success = store.add_doc()
             >>> print(success)  # True if added, False if exists
 
@@ -275,7 +314,7 @@ class StoreDocument:
             each search result. Returns empty list if collection doesn't exist.
 
         Example:
-            >>> store = StoreDocument("example.pdf", QdrantClient(":memory:"))
+            >>> store = StoreDocument("example.pdf", ":memory:")
             >>> store.add_doc()
             >>> results = store.search("relevant query", k=3)
             >>> print(results[0]["content"])
